@@ -675,3 +675,31 @@ fn the_retro_files_into_the_projects_lane() {
         "section 6 delegates the lane rule to the retro skill"
     );
 }
+
+/// AGE-1: a `## Answer` block in a ticket description outranks the brief
+/// sections above it. The store reads the block as a line-anchored,
+/// case-insensitive `## Answer` heading, and `ticket answer` is the one write
+/// that records it and closes a human hold, so every prompt that reads a
+/// brief carries the precedence rule, not just the store.
+#[test]
+fn the_agent_prompts_carry_the_answer_precedence_rule() {
+    for path in [
+        "agents/builder.md",
+        "agents/refiner.md",
+        "agents/reviewer.md",
+    ] {
+        let prompt = file(path);
+        assert!(
+            prompt.contains("supersedes the sections above it"),
+            "{path}: the Answer block does not supersede the sections above it"
+        );
+        assert!(
+            prompt.contains("in the Answer's favor"),
+            "{path}: a What/Answer conflict does not resolve in the Answer's favor"
+        );
+        assert!(
+            prompt.contains("named in the PR body"),
+            "{path}: the What/Answer conflict is not named in the PR body"
+        );
+    }
+}

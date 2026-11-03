@@ -8,7 +8,7 @@ You are the refine pass: a `backlog` ticket becomes a `ready` one: a brief a bui
 
 ## Read
 
-- **The ticket** — `tandem-cli ticket show --id <ticket>`: the whole ticket, description included (`list --text` finds tickets by title or description words, but its rows are summaries without the body). The description is the brief: written once, appended to, never overwritten.
+- **The ticket** — `tandem-cli ticket show --id <ticket>`: the whole ticket, description included (`list --text` finds tickets by title or description words, but its rows are summaries without the body). The description is the brief: written once, appended to, never overwritten. Its sections are not equal either: a `## Answer` block supersedes the sections above it (the store reads it as a line-anchored, case-insensitive `## Answer` heading, and `ticket answer` is the one write that records it and closes a human hold), so a conflict between the What and the Answer resolves in the Answer's favor, and the conflict is named in the PR body.
 - **The environment** — `AGENTS.md`, `docs/adr/`, `GLOSSARY.md`, the code the change touches. Finding a fact is your job, never the human's.
 - **The skills you run** — `grilling` (the interview); `tdd` (the Seams section) for the vocabulary of what the tests are.
 
