@@ -43,6 +43,7 @@ function ready(): SnapshotState {
     type: 'loaded',
     reply: { revision: 12, tickets: [ticket] },
     lanes: ['Port'],
+    projects: [{ name: 'Port', lanes: ['Port'] }],
   })
 }
 
@@ -53,8 +54,10 @@ describe('the shell snapshot', () => {
       revision: null,
       tickets: [],
       lanes: [],
+      projects: [],
       usage: null,
       roster: [],
+      activeProject: null,
       error: null,
       notice: null,
       stale: false,
@@ -91,6 +94,7 @@ describe('the shell snapshot', () => {
       type: 'loaded',
       reply: { revision: 13, tickets: [ticket] },
       lanes: ['Port'],
+      projects: [{ name: 'Port', lanes: ['Port'] }],
     })
     expect(caughtUp.stale).toBe(false)
     expect(caughtUp.revision).toBe(13)
@@ -100,13 +104,31 @@ describe('the shell snapshot', () => {
     const next = snapshotReducer(initialSnapshot, {
       type: 'settings',
       roster: ['human', 'review'],
+      activeProject: null,
     })
     expect(next.roster).toEqual(['human', 'review'])
+    expect(next.activeProject).toBeNull()
 
     // A failed settings read leaves the roster as it was: the board keeps its
     // names, and the picker does not empty itself over one refused read.
     const failed = snapshotReducer(next, { type: 'failed', message: 'no store' })
     expect(failed.roster).toEqual(['human', 'review'])
+  })
+
+  it('carries the active project the settings read answers, or every lane', () => {
+    const focused = snapshotReducer(initialSnapshot, {
+      type: 'settings',
+      roster: [],
+      activeProject: 'Tandem',
+    })
+    expect(focused.activeProject).toBe('Tandem')
+
+    const cleared = snapshotReducer(focused, {
+      type: 'settings',
+      roster: [],
+      activeProject: null,
+    })
+    expect(cleared.activeProject).toBeNull()
   })
 
   it('carries the one usage report the Usage face draws', () => {
@@ -131,6 +153,7 @@ describe('the shell snapshot', () => {
       type: 'loaded',
       reply: { revision: 13, tickets: [ticket] },
       lanes: ['Port'],
+      projects: [{ name: 'Port', lanes: ['Port'] }],
     })
     expect(reloaded.notice).toBe('the board moved')
 

@@ -1,15 +1,29 @@
 # Contributing to Tandem
 
-Thanks for stopping by. Tandem is an MIT-licensed macOS board for you and your
-AI coding agents, and contributions are welcome. This file is the on-ramp: what
+Thanks for stopping by. Tandem is an MIT-licensed board for you and your
+AI coding agents that ships as a macOS app, and contributions are welcome.
+This file is the on-ramp: what
 you need, how to set the repo up, which checks your pull request must pass, and
 the conventions the project keeps. The short version lives in the README's
 [How to contribute](README.md#how-to-contribute); this file is the full one.
 
 ## Prerequisites
 
-- An Apple silicon Mac running macOS 27 or later, for app work. The Rust core
-  builds anywhere Rust builds, but the app itself is macOS-only.
+Contributing needs only a checkout on any of the three CI platforms below; an
+Apple silicon Mac is only for shipped-app work.
+
+- Any of the three CI platforms (macOS, Windows, Ubuntu) for Rust or app code,
+  test and packaging work. CI runs the Rust suite and the app suite
+  (typecheck, tests, packaging, artifact check, and smoke on macOS and Linux
+  only) on all three, so a
+  checkout there builds and tests what it can run. The packaged app is
+  verified on all three by CI, but only the macOS artifact ships: Windows and
+  Linux app builds are unshipped and unsupported.
+- Only for shipped-app work: an Apple silicon Mac running macOS 27 or later,
+  for installing the cask or the script, the Gatekeeper strip, and running
+  the built `Tandem.app`. The release publishes macOS artifacts only,
+  and the scripted install is macOS-only (it refuses off Darwin/arm64 and
+  writes to `/Applications`).
 - Rust via [rustup](https://rustup.rs). The pin lives in
   [rust/rust-toolchain.toml](rust/rust-toolchain.toml) (currently 1.99.1 with
   the `rustfmt` and `clippy` components), so the right toolchain arrives on
@@ -87,7 +101,7 @@ your change on `main` and the maintainer takes it from there.
 
 ## License
 
-Tandem is MIT licensed (copyright 2025 Gianni Acquisto); see
+Tandem is MIT licensed (copyright 2026 Gianni Acquisto); see
 [LICENSE](LICENSE). The third-party notices are in
 [NOTICE.txt](NOTICE.txt). There is no contributor license agreement and no
 Developer Certificate of Origin: your pull request under the MIT license is

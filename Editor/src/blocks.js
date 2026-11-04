@@ -25,6 +25,7 @@
 
 import { scanWikilinks } from "./pure/scan.js";
 import { scanMath } from "./pure/math.js";
+import { scanHighlights } from "./pure/highlight.js";
 import { resolveWikilink } from "./pure/resolve.js";
 import { frontmatterRange } from "./pure/frontmatter.js";
 
@@ -175,6 +176,20 @@ export function planPreview({ text, tree, notes = [], notePath = "", reveal = nu
     }
   }
 
+  // 2b. Highlights: ==mark== renders as an inline mark span (the delimiters
+  //    hide, the content spans .tandem-mark). Scanned with only the code
+  //    ranges masked: overlaps with wikilink and math ranges resolve in
+  //    the cleanup below (a span strictly inside a replaced range is
+  //    dropped, one merely crossing it survives, so a mark wraps a link
+  //    while a link target keeps its text as written).
+  const highlights = scanHighlights(text, codeRanges);
+  for (const h of highlights) {
+    if (fmRange && h.from < fmRange[1]) continue;
+    addReplace(h.from, h.from + 2); // opening ==
+    addReplace(h.to - 2, h.to); // closing ==
+    spans.push({ from: h.from + 2, to: h.to - 2, className: "tandem-mark" });
+  }
+
   // 3. Structural decorations from the tree.
   if (tree) {
     const ctx = {
@@ -304,19 +319,50 @@ function visit(cur, ctx) {
   descend(cur, ctx);
 }
 
+// The info string's first word decides the fence's treatment: `mermaid`
+// (trimmed, case-insensitive) draws a diagram, everything else (including
+// `mermaidjs`) is code.
+function isMermaidInfo(info) {
+  return info.trim().split(/\s+/)[0].toLowerCase() === "mermaid";
+}
+
 function fence(node, ctx) {
   const { text, lines, addReplace, addLineClass, blocks } = ctx;
   const firstNl = text.indexOf("\n", node.from);
   if (firstNl === -1) return; // malformed one-liner: leave literal
   let info = "";
   let closeMark = null;
+  const codeText = [];
   for (const c of childrenOf(node)) {
     if (c.name === "CodeInfo") info = text.slice(c.from, c.to).trim();
+    else if (c.name === "CodeText") codeText.push(text.slice(c.from, c.to));
     else if (c.name === "CodeMark") closeMark = c; // last CodeMark = closing fence
   }
-  if (!closeMark) return;
+  // An unclosed fence has one CodeMark (its opener): the closing mark must
+  // come after the opening line or there is nothing to close.
+  if (!closeMark || closeMark.from <= firstNl) return;
   const openIdx = lines.indexAt(node.from);
   const closeIdx = lines.indexAt(closeMark.from);
+  // A mermaid fence is drawn, not shown: one replace over the whole fence
+  // (opening line through the closing fence line, whose newline goes with it
+  // as for every other block widget, so the diagram leaves no empty line
+  // behind) plus one block widget on the opening line. The source is the
+  // fence body verbatim as the tree spells it: the CodeText runs, so a
+  // blockquote's `>` markers and a list item's indent are gone, and the
+  // body's own leading spaces stay, with its trailing newlines trimmed.
+  // Every other info string keeps the code plan below.
+  if (isMermaidInfo(info)) {
+    addReplace(lines.from(openIdx), lines.withBreak(closeIdx)[1]);
+    blocks.push({
+      at: lines.from(openIdx),
+      side: 0,
+      widget: {
+        kind: "mermaid",
+        source: codeText.join("").replace(/\n+$/, ""),
+      },
+    });
+    return;
+  }
   addReplace(node.from, firstNl + 1); // opening line, incl. its newline
   addReplace(closeMark.from, closeMark.to); // closing fence text only
   for (let i = openIdx + 1; i <= closeIdx; i++) {
@@ -401,19 +447,43 @@ function setextHeading(node, ctx) {
 
 function blockquote(cur, ctx) {
   const node = cur.node;
-  const { lines, addLineClass } = ctx;
-  if (ctx.inQuote === 0) {
+  const { text, lines, addReplace, addLineClass } = ctx;
+  // A GitHub-style callout: the blockquote's first line opens with
+  // `[!NOTE]` (one of the five kinds, case-insensitive). Only the
+  // blockquote's own level is stripped, so an outer quote around a callout
+  // is not itself a callout.
+  const callout = calloutMarker(text, node, lines);
+  if (ctx.inQuote === 0 || callout) {
     const a = lines.indexAt(node.from);
     const b = lines.indexAt(node.to - 1);
     for (let i = a; i <= b; i++) {
       addLineClass(i, "tandem-quote");
       if (i === a) addLineClass(i, "tandem-quote-first");
       if (i === b) addLineClass(i, "tandem-quote-last");
+      if (callout) {
+        addLineClass(i, "tandem-callout");
+        addLineClass(i, "tandem-callout-" + callout.kind.toLowerCase());
+      }
     }
+  }
+  if (callout) {
+    // The marker hides behind its label widget (the reveal rule drops this
+    // replace on the caret's line, so the raw syntax stays editable).
+    addReplace(callout.from, callout.to, { kind: "callout", callout: callout.kind });
   }
   ctx.inQuote++;
   descend(cur, ctx);
   ctx.inQuote--;
+}
+
+// The callout marker on a blockquote's own first line, or null. Returns
+// the uppercased kind plus the absolute `[!KIND]` range.
+function calloutMarker(text, node, lines) {
+  const head = text.slice(node.from, lines.to(lines.indexAt(node.from)));
+  const m = /^[ \t]*>[ \t]?\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i.exec(head);
+  if (!m) return null;
+  const from = node.from + m[0].indexOf("[");
+  return { kind: m[1].toUpperCase(), from, to: from + m[1].length + 3 };
 }
 
 function quoteMark(node, ctx) {

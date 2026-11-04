@@ -59,6 +59,7 @@ import {
   BulletWidget,
   MathWidget,
   DisplayMathWidget,
+  MermaidWidget,
   ImageWidget,
   InlineImageWidget,
   FrontmatterWidget,
@@ -66,9 +67,11 @@ import {
   CodeTagWidget,
   HrWidget,
   CeilingWarningWidget,
+  CalloutWidget,
   toggleTask,
 } from "./widgets.js";
 import { ligneTheme } from "./theme.js";
+import { currentTheme, renderDiagram } from "./mermaid.js";
 import { postDirty, postLinkOpened, postLoaded, postFontSize, postSendToTodos } from "./bridge.js";
 import { mountToolbar } from "./toolbar.js";
 
@@ -173,6 +176,8 @@ function makeWidget(d) {
       return new MathWidget(d.content);
     case "displaymath":
       return new DisplayMathWidget(d.content);
+    case "mermaid":
+      return new MermaidWidget(d.source);
     case "image":
       return new ImageWidget(d.src, d.alt, d.notePath);
     case "inlineimage":
@@ -185,6 +190,8 @@ function makeWidget(d) {
       return new CodeTagWidget(d.info);
     case "hr":
       return new HrWidget();
+    case "callout":
+      return new CalloutWidget(d.callout);
     default:
       throw new RangeError("unknown plan widget kind: " + d.kind);
   }
@@ -684,21 +691,21 @@ export function specFor(kind, state) {
 //
 // The CSS custom property `--tandem-editor-font-size` on the editor root
 // scales the whole pane (theme.js' "&" rule reads it). The value is a
-// number of px, stepped by 1 and clamped; the 13.5 default snaps to an
-// integer on the first step. Style.css carries the 13.5px default.
+// number of px, stepped by 1 and clamped; the 16 default is the reading
+// size. Style.css carries the 16px default.
 
-export const DEFAULT_EDITOR_FONT_SIZE = 13.5;
+export const DEFAULT_EDITOR_FONT_SIZE = 16;
 export const MIN_EDITOR_FONT_SIZE = 11;
 export const MAX_EDITOR_FONT_SIZE = 20;
 
-/** Clamp a candidate size into the sane range (13.5 for non-numbers). */
+/** Clamp a candidate size into the sane range (16 for non-numbers). */
 export function clampFontSize(px) {
   const n = Number(px);
   if (!Number.isFinite(n)) return DEFAULT_EDITOR_FONT_SIZE;
   return Math.max(MIN_EDITOR_FONT_SIZE, Math.min(MAX_EDITOR_FONT_SIZE, n));
 }
 
-/** The next size for a +1 / −1 step (the 13.5 default snaps onto integers). */
+/** The next size for a +1 / −1 step. */
 export function stepFontSize(px, direction) {
   const n = Number.isFinite(Number(px)) ? Number(px) : DEFAULT_EDITOR_FONT_SIZE;
   const stepped = direction > 0 ? Math.floor(n) + 1 : Math.ceil(n) - 1;
@@ -763,6 +770,42 @@ export function editorViewExtensions() {
       if (text !== null) postDirty(text);
     }),
   ];
+}
+
+// -- Mermaid diagrams: the day/night repaint ---------------------------------------
+//
+// A diagram is the one painted surface whose colours do not come from CSS:
+// mermaid bakes the palette into the SVG at render time. A theme flip (the
+// shell sets data-theme on <html>) therefore re-renders the mounted
+// diagrams in place against the new palette, driven by one
+// MutationObserver, with no document transaction and no page reload. A node
+// the plan has since dropped is skipped by isConnected (a detached diagram
+// has no palette to win), and the widget's data-mermaid-theme keeps a second
+// flip for the same theme from drawing twice.
+export function reRenderDiagrams(doc = globalThis.document) {
+  const theme = currentTheme(doc);
+  let drawn = 0;
+  for (const node of doc?.querySelectorAll?.(".tandem-mermaid") ?? []) {
+    if (node.isConnected === false) continue;
+    const source = node.getAttribute("data-mermaid-source");
+    if (source === null) continue;
+    if (node.getAttribute("data-mermaid-theme") === theme) continue;
+    node.setAttribute("data-mermaid-theme", theme);
+    void renderDiagram(node, source, theme);
+    drawn++;
+  }
+  return drawn;
+}
+
+// The one observer: the editor page loads once per app run, so it is
+// installed with the view and lives as long as it does.
+export function observeThemeChanges(doc = globalThis.document) {
+  const observer = new MutationObserver(() => reRenderDiagrams(doc));
+  observer.observe(doc.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+  return observer;
 }
 
 export function mountEditor(parent, { doc, notes, notePath } = {}) {
@@ -831,7 +874,9 @@ export function mountEditor(parent, { doc, notes, notePath } = {}) {
       postSendToTodos(todoCandidateText(view.state));
   }
 
-  postLoaded(); // the page is ready; Swift then sends setNoteIndex/setDocument
+  postLoaded(); // the page is ready; the shell then sends setNoteIndex/setDocument
+  // The diagrams follow the day/night switch (mermaid bakes the palette in).
+  observeThemeChanges();
   return view;
 }
 

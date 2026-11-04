@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, params};
 
 use super::rows::{
-    NewComment, NewDependency, NewLane, NewSession, NewSetting, NewSprint, NewTicket,
+    NewComment, NewDependency, NewLane, NewProject, NewSession, NewSetting, NewSprint, NewTicket,
 };
 use super::{Actor, Result};
 
@@ -45,15 +45,24 @@ impl Write<'_> {
     pub fn insert_lane(&self, lane: NewLane<'_>) -> Result<()> {
         self.before_mutation()?;
         self.execute(
-            "INSERT INTO lanes (name, key, last_number, position, author)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO lanes (name, key, last_number, position, project, author)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 lane.name,
                 lane.key,
                 lane.last_number,
                 lane.position,
+                lane.project,
                 self.actor.as_str()
             ],
+        )
+    }
+
+    pub fn insert_project(&self, project: NewProject<'_>) -> Result<()> {
+        self.before_mutation()?;
+        self.execute(
+            "INSERT INTO projects (name, position, author) VALUES (?1, ?2, ?3)",
+            params![project.name, project.position, self.actor.as_str()],
         )
     }
 
@@ -252,6 +261,27 @@ impl Write<'_> {
             "INSERT INTO settings (key, value, author) VALUES (?1, ?2, ?3)",
             params![setting.key, setting.value, self.actor.as_str()],
         )
+    }
+
+    /// Store a setting whether or not the key was stored before: the roster and
+    /// the focus are whole-value replaces, so the second write overwrites the
+    /// first in one statement. A first write inserts; a later one updates the
+    /// value and the author, and a write that changes nothing still reads its
+    /// receipt after.
+    pub fn upsert_setting(&self, setting: NewSetting<'_>) -> Result<()> {
+        self.before_mutation()?;
+        self.execute(
+            "INSERT INTO settings (key, value, author) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, author = excluded.author",
+            params![setting.key, setting.value, self.actor.as_str()],
+        )
+    }
+
+    /// Drop a setting's row: clearing the focus removes the key, so an absent
+    /// row and a cleared one read the same way. A missing row is a no-op.
+    pub fn delete_setting(&self, key: &str) -> Result<()> {
+        self.before_mutation()?;
+        self.execute("DELETE FROM settings WHERE key = ?1", params![key])
     }
 
     /// Whether the sprints table carries a (lane, number). The sprints domain is

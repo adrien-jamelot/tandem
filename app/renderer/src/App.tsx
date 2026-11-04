@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
-import type { Call } from '../../src/shared/bridge'
+import type { Method } from '../../src/shared/bridge'
 import { BikeshedFace } from './faces/BikeshedFace'
 import { SettingsFace } from './faces/SettingsFace'
 import { TicketSheet } from './faces/TicketSheet'
 import { TicketsFace } from './faces/TicketsFace'
 import { UsageFace } from './faces/UsageFace'
+import { WorkflowFace } from './faces/WorkflowFace'
 import { closeHref, parseRoute, tabHref, type Route } from './shell/route'
 import { initialSnapshot, snapshotReducer, type SnapshotState } from './shell/snapshot'
 import { refusalBanner, writeBlocked, type WriteCaller, type WriteOutcome } from './shell/write'
@@ -34,10 +35,11 @@ function face(
   snapshot: SnapshotState,
   actions: {
     onReload: () => void
-    onWrite: (call: Call, expected: number | null) => Promise<WriteOutcome>
+    onWrite: (call: Method, expected: number | null) => Promise<WriteOutcome>
     onDismiss: () => void
     openTicket: string | null
     onOpenTicket: (ticket: TicketSummary) => void
+    onPickProject: (lane: string | null) => void
   },
 ) {
   switch (route.tab) {
@@ -47,6 +49,8 @@ function face(
           snapshot={snapshot}
           view={route.view}
           roster={snapshot.roster}
+          activeProject={snapshot.activeProject}
+          onPickProject={actions.onPickProject}
           onReload={actions.onReload}
           onWrite={actions.onWrite}
           onDismiss={actions.onDismiss}
@@ -55,17 +59,28 @@ function face(
         />
       )
     case 'bikeshed':
-      return <BikeshedFace onOpenTicket={actions.onOpenTicket} />
+      return (
+        <BikeshedFace
+          onOpenTicket={actions.onOpenTicket}
+          lanes={snapshot.lanes}
+          activeProject={snapshot.activeProject}
+          onPickProject={actions.onPickProject}
+        />
+      )
     case 'usage':
       return <UsageFace report={snapshot.usage} />
+    case 'workflow':
+      return (
+        <WorkflowFace
+          tickets={snapshot.tickets}
+          lanes={snapshot.lanes}
+          activeProject={snapshot.activeProject}
+          onOpenTicket={actions.onOpenTicket}
+        />
+      )
     case 'settings':
-      return <SettingsFace />
+      return <SettingsFace revision={snapshot.revision} />
   }
-}
-
-function revisionLabel(snapshot: SnapshotState): string {
-  if (snapshot.revision !== null) return `rev ${snapshot.revision}`
-  return snapshot.status === 'failed' ? 'no store' : 'connecting'
 }
 
 /**
@@ -97,14 +112,17 @@ export function App() {
 
   const load = useCallback(async (): Promise<void> => {
     try {
-      // The whole board, the lanes it is grouped into, the one usage report,
-      // and the settings both assignee surfaces read, in one pass: the report is
-      // the derivation's (`usage.report`), so the Usage face sums nothing, and
-      // the roster is the store's (`settings.get`), so neither surface derives
-      // its names from the rows.
-      const [board, lanes, usage, settings] = await Promise.all([
+      // The whole board, the lanes it is grouped into, the projects those
+      // lanes belong to, the one usage report, and the settings both assignee
+      // surfaces read, in one pass: the report is the derivation's
+      // (`usage.report`), so the Usage face sums nothing, and the roster is
+      // the store's (`settings.get`), so neither surface derives its names
+      // from the rows. The board snapshot stays lane-keyed; the renderer joins
+      // `project.list` for the mapping instead of growing the snapshot.
+      const [board, lanes, projects, usage, settings] = await Promise.all([
         window.tandem.call({ method: 'ticket.list', params: WHOLE_BOARD }),
         window.tandem.call({ method: 'lane.list', params: {} }),
+        window.tandem.call({ method: 'project.list', params: {} }),
         window.tandem.call({ method: 'usage.report', params: {} }),
         window.tandem.call({ method: 'settings.get', params: {} }),
       ])
@@ -121,6 +139,15 @@ export function App() {
         dispatch({ type: 'failed', message: 'The lanes could not be read.' })
         return
       }
+      // A refused project listing leaves the board ungrouped rather than
+      // taking it down: the lanes still draw, flat, in lane order.
+      const projectRows =
+        !('error' in projects) && 'projects' in projects.reply
+          ? projects.reply.projects
+          : []
+      if ('error' in projects) {
+        dispatch({ type: 'notice', message: projects.error.message })
+      }
       if ('error' in usage) {
         // A refused report leaves the Usage face waiting; it does not take the
         // board down with it.
@@ -133,10 +160,19 @@ export function App() {
         // they already have: Unassigned and `human`. It is not a board failure.
         dispatch({ type: 'notice', message: settings.error.message })
       } else if ('roster' in settings.reply) {
-        dispatch({ type: 'settings', roster: settings.reply.roster })
+        dispatch({
+          type: 'settings',
+          roster: settings.reply.roster,
+          activeProject: settings.reply.activeProject ?? null,
+        })
       }
       if ('tickets' in board.reply && 'revision' in board.reply) {
-        dispatch({ type: 'loaded', reply: board.reply, lanes: lanes.reply.lanes })
+        dispatch({
+          type: 'loaded',
+          reply: board.reply,
+          lanes: lanes.reply.lanes,
+          projects: projectRows,
+        })
       }    } catch {
       if (mounted.current) {
         dispatch({ type: 'failed', message: 'The store could not be read.' })
@@ -167,7 +203,7 @@ export function App() {
 
   const write = useCallback(
     async (
-      call: Call,
+      call: Method,
       expected: number | null,
       caller: WriteCaller = 'face',
       followUp?: string,
@@ -198,7 +234,7 @@ export function App() {
   )
 
   const faceWrite = useCallback(
-    (call: Call, expected: number | null, followUp?: string): Promise<WriteOutcome> =>
+    (call: Method, expected: number | null, followUp?: string): Promise<WriteOutcome> =>
       write(call, expected, 'face', followUp),
     [write],
   )
@@ -206,7 +242,8 @@ export function App() {
   // The sheet carries its own refusals, so its writes never raise the banner
   // behind the modal.
   const sheetWrite = useCallback(
-    (call: Call, expected: number | null): Promise<WriteOutcome> => write(call, expected, 'sheet'),
+    (call: Method, expected: number | null, followUp?: string): Promise<WriteOutcome> =>
+      write(call, expected, 'sheet', followUp),
     [write],
   )
 
@@ -214,6 +251,19 @@ export function App() {
   const reload = useCallback(() => {
     void load()
   }, [load])
+  // Persist the project focus through the shell's one door: the revision guard
+  // still applies, so a pick on a stale listing re-reads instead of writing
+  // over it, and the change event re-reads the new focus into the snapshot.
+  const pickProject = useCallback(
+    (lane: string | null) => {
+      void faceWrite({ method: 'settings.set', params: { project: lane, roster: null } }, null).then(
+        (outcome) => {
+          if (outcome.ok) reload()
+        },
+      )
+    },
+    [faceWrite, reload],
+  )
   const open = useCallback((ticket: TicketSummary) => setOpenTicket(ticket.id), [])
   const closeSheet = useCallback(() => {
     setOpenTicket(null)
@@ -240,9 +290,6 @@ export function App() {
             </a>
           ))}
         </nav>
-        <span className="shell__revision" aria-live="polite">
-          {revisionLabel(snapshot)}
-        </span>
       </header>
 
       <main className="shell__body">
@@ -265,10 +312,12 @@ export function App() {
           onDismiss: dismiss,
           openTicket,
           onOpenTicket: open,
+          onPickProject: pickProject,
         })}
         {openTicket === null ? null : (
           <TicketSheet
             ticketId={openTicket}
+            expandedSession={route.ticket === openTicket ? route.session : null}
             lanes={snapshot.lanes}
             roster={snapshot.roster}
             revision={snapshot.revision}

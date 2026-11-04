@@ -26,18 +26,28 @@ const sources = filesUnder(renderer, ['.ts', '.tsx', '.css', '.html']).filter(
 )
 
 describe('the shell', () => {
-  it('keeps the four tabs, in the spec order', () => {
-    expect(TABS.map((tab) => tab.label)).toEqual(['Tickets', 'Bikeshed', 'Usage', 'Settings'])
-    expect(new Set(TABS.map((tab) => tab.id)).size).toBe(4)
+  it('keeps the five tabs, in the spec order', () => {
+    expect(TABS.map((tab) => tab.label)).toEqual(['Tickets', 'Bikeshed', 'Usage', 'Workflow', 'Settings'])
+    expect(new Set(TABS.map((tab) => tab.id)).size).toBe(5)
   })
 
   it('routes every tab to its own path and back', () => {
     for (const tab of TABS) {
-      expect(parseRoute(tabHref(tab.id))).toEqual({ tab: tab.id, view: 'list', ticket: null })
+      expect(parseRoute(tabHref(tab.id))).toEqual({
+        tab: tab.id,
+        view: 'list',
+        ticket: null,
+        session: null,
+      })
       expect(tabHref(tab.id)).toBe(`#/${tab.id}`)
     }
-    expect(parseRoute('')).toEqual({ tab: 'tickets', view: 'list', ticket: null })
-    expect(parseRoute('#/nowhere')).toEqual({ tab: 'tickets', view: 'list', ticket: null })
+    expect(parseRoute('')).toEqual({ tab: 'tickets', view: 'list', ticket: null, session: null })
+    expect(parseRoute('#/nowhere')).toEqual({
+      tab: 'tickets',
+      view: 'list',
+      ticket: null,
+      session: null,
+    })
   })
 
   it('routes the Tickets face two ways: the list and the board', () => {
@@ -45,15 +55,22 @@ describe('the shell', () => {
       tab: 'tickets',
       view: 'list',
       ticket: null,
+      session: null,
     })
     expect(parseRoute(viewHref('tickets', 'board'))).toEqual({
       tab: 'tickets',
       view: 'board',
       ticket: null,
+      session: null,
     })
     expect(viewHref('tickets', 'board')).toBe('#/tickets/board')
     // Only the Tickets face has a board; another tab's second segment is ignored.
-    expect(parseRoute('#/usage/board')).toEqual({ tab: 'usage', view: 'list', ticket: null })
+    expect(parseRoute('#/usage/board')).toEqual({
+      tab: 'usage',
+      view: 'list',
+      ticket: null,
+      session: null,
+    })
   })
 
   it('opens the sheet from a kept ticket link, on whatever tab carries it', () => {
@@ -63,11 +80,13 @@ describe('the shell', () => {
       tab: 'tickets',
       view: 'list',
       ticket: 'D5BAD6F7-5D45-4910-9A69-1C0409479BAD',
+      session: null,
     })
     expect(parseRoute('#/bikeshed?ticket=PRT-17')).toEqual({
       tab: 'bikeshed',
       view: 'list',
       ticket: 'PRT-17',
+      session: null,
     })
     expect(parseRoute('#/tickets/board?ticket=PRT-17').view).toBe('board')
     // An empty or unnamed ticket is no ticket: the face, not an empty sheet.
@@ -121,6 +140,16 @@ describe('the shell', () => {
   it('enforces the window floor in the document as well as the window', () => {
     const css = readFileSync(join(renderer, 'src', 'app.css'), 'utf8')
     expect(css).toMatch(/min-width:\s*var\(--window-floor\)/)
+  })
+
+  it('holds the tickets list in a centred column while the board keeps the window', () => {
+    // The board keeps the wide treatment that lifts the column cap; the list
+    // reads as a centred 780px column, and no rule caps `.list` on its own.
+    const css = readFileSync(join(renderer, 'src', 'app.css'), 'utf8')
+    expect(css).toMatch(/\.tickets--list[^}]*780px/)
+    expect(css).toMatch(/\.tickets--list[^}]*margin:\s*0\s+auto/)
+    expect(css).toMatch(/\.tickets--board[^}]*max-width:\s*none/)
+    expect(css).not.toMatch(/\.list\s*\{[^}]*max-width/)
   })
 
   it('exposes one world key, named tandem', () => {

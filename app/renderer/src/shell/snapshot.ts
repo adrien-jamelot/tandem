@@ -1,6 +1,16 @@
+import type { ProjectListReply } from '../wire/ProjectListReply'
 import type { TicketListReply } from '../wire/TicketListReply'
 import type { TicketSummary } from '../wire/TicketSummary'
 import type { UsageReportView } from '../wire/UsageReportView'
+
+/**
+ * One project and its lanes, in render order: the mapping the board joins
+ * onto its lane rows instead of growing the snapshot.
+ */
+export type SnapshotProject = {
+  name: string
+  lanes: string[]
+}
 
 /**
  * What the shell knows about the store: the last listing's revision, its rows,
@@ -17,9 +27,13 @@ export type SnapshotState = {
   revision: number | null
   tickets: TicketSummary[]
   lanes: string[]
+  /** Every project with its lanes, in render order: the board's grouping. */
+  projects: SnapshotProject[]
   usage: UsageReportView | null
   /** The store's roster, the names both assignee surfaces offer. */
   roster: string[]
+  /** The active project: the lane the faces draw, or null for every lane. */
+  activeProject: string | null
   error: string | null
   /** A conflict or refusal the human has not dismissed yet. */
   notice: string | null
@@ -28,9 +42,9 @@ export type SnapshotState = {
 }
 
 export type SnapshotAction =
-  | { type: 'loaded'; reply: TicketListReply; lanes: string[] }
+  | { type: 'loaded'; reply: TicketListReply; lanes: string[]; projects: SnapshotProject[] }
   | { type: 'usage'; report: UsageReportView }
-  | { type: 'settings'; roster: string[] }
+  | { type: 'settings'; roster: string[]; activeProject: string | null }
   | { type: 'failed'; message: string }
   | { type: 'stale' }
   | { type: 'notice'; message: string }
@@ -41,8 +55,10 @@ export const initialSnapshot: SnapshotState = {
   revision: null,
   tickets: [],
   lanes: [],
+  projects: [],
   usage: null,
   roster: [],
+  activeProject: null,
   error: null,
   notice: null,
   stale: false,
@@ -56,6 +72,7 @@ export function snapshotReducer(state: SnapshotState, action: SnapshotAction): S
       revision: action.reply.revision,
       tickets: action.reply.tickets,
       lanes: action.lanes,
+      projects: action.projects,
       error: null,
       stale: false,
     }
@@ -64,7 +81,7 @@ export function snapshotReducer(state: SnapshotState, action: SnapshotAction): S
     return { ...state, usage: action.report }
   }
   if (action.type === 'settings') {
-    return { ...state, roster: action.roster }
+    return { ...state, roster: action.roster, activeProject: action.activeProject }
   }
   if (action.type === 'stale') {
     return { ...state, stale: true }

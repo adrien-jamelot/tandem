@@ -29,9 +29,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::bikeshed::health::BikeshedHealth;
+use crate::domain::harness::TranscriptEntry;
+use crate::domain::sprint::Sprint;
 use crate::wire::views::{
     BacklinkView, CommentView, MarkdownBlockView, NoteContentView, NoteMoveView, NoteNodeView,
-    NoteWriteView, RecoveryView, TicketDetail, TicketSummary, UsageReportView,
+    NotePathView, NoteWriteView, RecoveryView, TicketDetail, TicketSummary, UsageReportView,
 };
 
 // MARK: - Requests
@@ -108,6 +110,31 @@ methods! {
     LaneAdd: "lane.add", LaneAddParams, "lane add";
     LaneRename: "lane.rename", LaneRenameParams, "lane rename";
     LaneDelete: "lane.delete", LaneDeleteParams, "lane delete";
+    ProjectList: "project.list", EmptyParams, "project list";
+    ProjectAdd: "project.add", ProjectAddParams, "project add";
+    ProjectRename: "project.rename", ProjectRenameParams, "project rename";
+    ProjectDelete: "project.delete", ProjectDeleteParams, "project delete";
+    // The sprint record's reads and its one app-reachable write (TAN-254). The
+    // verbs are the CLI's own (`sprint list/show/open`), so the app configures
+    // the workflow through the same acts an agent runs. Below, `ticket`, `run`
+    // and `close` join the wire for the MCP door (TAN-274): the sprint session
+    // stays the run log's writer, and the MCP call runs the CLI verb's own
+    // domain call, so the run log keeps one writer per act.
+    SprintList: "sprint.list", SprintListParams, "sprint list";
+    SprintShow: "sprint.show", SprintShowParams, "sprint show";
+    SprintOpen: "sprint.open", SprintOpenParams, "sprint open";
+    // The session record's verbs and the rest of the sprint record, on the wire
+    // for the MCP door (TAN-274). Every row names the CLI verb that does the
+    // same work, so the parity test holds both doors to the grammar.
+    SessionStart: "session.start", SessionStartParams, "session start";
+    SessionLink: "session.link", SessionLinkParams, "session link";
+    SessionEnd: "session.end", SessionEndParams, "session end";
+    SessionList: "session.list", SessionListParams, "session list";
+    SessionShow: "session.show", SessionShowParams, "session show";
+    SprintTicket: "sprint.ticket", SprintTicketParams, "sprint ticket";
+    SprintRun: "sprint.run", SprintRunParams, "sprint run";
+    SprintClose: "sprint.close", SprintCloseParams, "sprint close";
+    NoteCapture: "note.capture", NoteCaptureParams, "note capture";
     // The Bikeshed face's reads. The CLI spells no verb for them today, and
     // they write nothing, so no UI-only write hides behind an empty verb. The
     // two mutations name the verbs they share with the agent face.
@@ -127,14 +154,32 @@ methods! {
     // table says so; `the_read_methods_without_a_cli_verb_are_named_here` names it.
     UsageReport: "usage.report", EmptyParams, "";
     // The settings the faces read, in one message: the sheet's assignee picker
-    // and the board's filter both offer the store's roster (PRT-38), which is a
-    // `settings` row with no CLI verb to spell. It writes nothing, so no
-    // UI-only write hides behind an empty verb.
+    // and the board's filter both offer the store's roster, and the board
+    // draws the active project beside it. Both are `settings` rows; the read
+    // writes nothing, so no UI-only write hides behind its empty verb. The
+    // write below names the CLI verb it shares with the Settings face's Save
+    // and the focus control.
     SettingsGet: "settings.get", EmptyParams, "";
+    // The settings write: the roster's whole-list replace and the
+    // active-project focus, each applied only when its key is present, so a
+    // roster Save leaves the focus alone and a focus pick leaves the roster
+    // alone. The bare frame clears the focus and leaves the roster alone.
+    // The CLI spells it `settings set`, so no UI-only write hides
+    // here.
+    SettingsSet: "settings.set", SettingsSetParams, "settings set";
     // The ticket sheet's read: a body in, the blocks it draws out. The parsing
     // is the core's (`TicketMarkdown`), so the app and the CLI cannot read one
     // dialect two ways, and the message writes nothing: an empty verb.
     MarkdownBlocks: "markdown.blocks", MarkdownBlocksParams, "";
+    // The ticket sheet's Sessions section (TAN-264). `session.transcript`
+    // answers one record's harness transcript, resolving the Tandem id (or the
+    // raw harness id) to the newest record naming the pointer, per
+    // `Sessions::resolve`. A record the harness no longer holds answers with
+    // an unavailable reason, never a refusal, so the section still renders.
+    // `session.list` also serves the sheet: a ticket the caller names answers
+    // the records that carried it, newest first. The row above carries the
+    // CLI verb because the MCP door (TAN-274) shares the same method.
+    SessionTranscript: "session.transcript", SessionTranscriptParams, "";
 }
 
 /// `markdown.blocks`: the text to parse. Absent is no body, which draws nothing.
@@ -142,6 +187,35 @@ methods! {
 #[serde(rename_all = "camelCase", default)]
 pub struct MarkdownBlocksParams {
     pub text: Option<String>,
+}
+
+/// `session.list`: the records, newest first. Every axis is optional, as the
+/// verb's flags are: an absent project answers every project, an absent ticket
+/// answers records that carried nothing in particular, and an absent status
+/// answers both states. A ticket the caller names answers the records that
+/// carried it, newest first (the sheet's Sessions section, TAN-264); a blank
+/// ticket is no filter, the way an absent filter is none on `ticket.list`.
+/// When both name a filter, the ticket narrows the project listing to the
+/// records that carried it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionListParams {
+    pub project: Option<String>,
+    pub ticket: Option<String>,
+    pub status: Option<String>,
+}
+
+/// `session.transcript`: the record whose harness transcript the sheet draws,
+/// the Tandem id or the raw harness id, and the page. `cursor` is the last
+/// position the caller holds; absent reads from the start. `limit` caps the
+/// page: below one reads one, past two hundred reads two hundred, absent reads
+/// fifty.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionTranscriptParams {
+    pub id: Option<String>,
+    pub cursor: Option<i64>,
+    pub limit: Option<i64>,
 }
 
 /// A method that takes nothing. The frame still carries `"params": {}`, so a
@@ -296,21 +370,25 @@ pub struct CommentAddParams {
     pub body: Option<String>,
 }
 
-/// `lane.add`: the name, and the ref key it issues.
+/// `lane.add`: the name, the ref key it issues, and the parent project.
+/// An absent project creates or reuses the project named for the lane.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LaneAddParams {
     pub name: Option<String>,
     pub abbr: Option<String>,
+    pub project: Option<String>,
 }
 
-/// `lane.rename`: from one name to another, optionally re-keying the refs.
+/// `lane.rename`: from one name to another, optionally re-keying the refs and
+/// re-parenting the lane. An absent project keeps the lane's parent.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LaneRenameParams {
     pub from: Option<String>,
     pub to: Option<String>,
     pub abbr: Option<String>,
+    pub project: Option<String>,
 }
 
 /// `lane.delete`: the name, and nothing else.
@@ -318,6 +396,669 @@ pub struct LaneRenameParams {
 #[serde(rename_all = "camelCase", default)]
 pub struct LaneDeleteParams {
     pub name: Option<String>,
+}
+
+/// `project.add`: the name, and nothing else. Add appends, there is no move.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectAddParams {
+    pub name: Option<String>,
+}
+
+/// `project.rename`: from one name to another, moving its lanes with it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectRenameParams {
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// `project.delete`: the name, and nothing else. Refused while lanes belong.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectDeleteParams {
+    pub name: Option<String>,
+}
+
+/// `sprint.list`: the lane's records, each axis optional as the verb's flags
+/// are. An absent lane lists every lane; an absent status lists both states.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SprintListParams {
+    pub lane: Option<String>,
+    pub status: Option<String>,
+}
+
+/// `sprint.show`: the lane whose open record is answered. A lane with none
+/// open answers the CLI's own error, whose next step is that lane's `open`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SprintShowParams {
+    pub lane: Option<String>,
+}
+
+/// `sprint.open`: the lane, the mode and the session the record names. An
+/// absent mode is `serial`, as the CLI defaults it; the session resolves as
+/// the verb resolves it (the caller's value, else `$OPENCODE_SESSION_ID`),
+/// and an absent one is the verb's own refusal.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SprintOpenParams {
+    pub lane: Option<String>,
+    pub mode: Option<String>,
+    pub session: Option<String>,
+}
+
+/// `session.start`: the record the pass opens. Every field is optional at
+/// parse, as the verb's flags are: an absent id is a minted one, an absent
+/// project is the working directory's last component, an absent agent is
+/// `$TANDEM_AGENT`, an absent harness session is `$OPENCODE_SESSION_ID`, and
+/// an absent brief is the domain's own refusal.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionStartParams {
+    pub project: Option<String>,
+    pub agent: Option<String>,
+    pub session: Option<String>,
+    pub harness_session: Option<String>,
+    pub harness_transport: Option<String>,
+    pub brief: Option<String>,
+}
+
+/// `session.link`: the ticket a record carries, and the record. An absent
+/// session is `$OPENCODE_SESSION_ID`, resolved to the record, as the verb
+/// resolves it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionLinkParams {
+    pub ticket: Option<String>,
+    pub session: Option<String>,
+}
+
+/// `session.end`: the stamp a record carries, and the usage the harness
+/// reported. Absent usage is absent on the record, never an invented zero.
+/// `usage_from_harness` absent is true on this door: the host that spawns the
+/// server is the harness the CLI flag reads, over the loopback API (TAN-276).
+/// A harness with no row for the record stamps without usage and says so in
+/// the note, never a failure. `harness_url` is the explicit server URL, as the
+/// CLI's `--harness-url` is; absent reads `TANDEM_HARNESS_URL`, else the
+/// rendezvous file for the record's transport.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionEndParams {
+    pub session: Option<String>,
+    pub outcome: Option<String>,
+    pub summary: Option<String>,
+    pub tokens_input: Option<i64>,
+    pub tokens_output: Option<i64>,
+    pub tokens_reasoning: Option<i64>,
+    pub tokens_cache_read: Option<i64>,
+    pub tokens_cache_write: Option<i64>,
+    pub cost: Option<f64>,
+    pub model: Option<String>,
+    pub skills: Option<String>,
+    pub usage_from_harness: Option<bool>,
+    pub harness_url: Option<String>,
+}
+
+/// `session.show`: one record, resolved as the verb resolves it: an exact id
+/// first, then `$OPENCODE_SESSION_ID` and the harness pointer.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionShowParams {
+    pub session: Option<String>,
+}
+
+/// `sprint.ticket`: the batch takes one ticket, in stored order.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SprintTicketParams {
+    pub lane: Option<String>,
+    pub ticket: Option<String>,
+}
+
+/// `sprint.run`: one dated entry on the run log. The note rides a JSON
+/// string; an empty one is the domain's own refusal.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SprintRunParams {
+    pub lane: Option<String>,
+    pub note: Option<String>,
+}
+
+/// `sprint.close`: the record the close stamps. An absent number closes the
+/// lane's open record, or its newest when every record has closed, as the
+/// verb does; an absent note closes without words.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SprintCloseParams {
+    pub lane: Option<String>,
+    pub number: Option<i64>,
+    pub note: Option<String>,
+}
+
+/// `note.capture`: one raw memory note. The body rides a JSON string, as the
+/// stdin bodies ride the CLI; an empty one is the domain's own refusal. An
+/// absent project is the working directory's last component and an absent
+/// session is `$OPENCODE_SESSION_ID`, as the verb defaults them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NoteCaptureParams {
+    pub kind: Option<String>,
+    pub project: Option<String>,
+    pub session: Option<String>,
+    pub body: Option<String>,
+}
+
+// MARK: - Input schemas
+
+/// One tool input's shape: an object whose properties are the params struct's
+/// fields. Every wire param is optional at parse (an absent field is the CLI's
+/// absent flag), so `required` is always empty; the registry test pins the
+/// property set against the struct's serialized fields, so a field added to
+/// one without the other fails the build.
+fn object_schema(properties: &[(&str, serde_json::Value)]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (name, schema) in properties {
+        map.insert((*name).to_string(), (*schema).clone());
+    }
+    serde_json::json!({
+        "type": "object",
+        "properties": serde_json::Value::Object(map),
+        "required": [],
+    })
+}
+
+/// A string field.
+fn string(description: &str) -> serde_json::Value {
+    serde_json::json!({"type": "string", "description": description})
+}
+
+/// A whole-number field.
+fn integer(description: &str) -> serde_json::Value {
+    serde_json::json!({"type": "integer", "description": description})
+}
+
+/// A decimal field.
+fn number(description: &str) -> serde_json::Value {
+    serde_json::json!({"type": "number", "description": description})
+}
+
+/// A true-or-false field.
+fn boolean(description: &str) -> serde_json::Value {
+    serde_json::json!({"type": "boolean", "description": description})
+}
+
+impl TicketListParams {
+    /// The tool input for `ticket.list`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("filter", string("open (default), done or all")),
+            (
+                "text",
+                string("a case- and accent-insensitive substring of the title or description"),
+            ),
+            (
+                "status",
+                string("comma-separated values, e.g. ready,in-progress"),
+            ),
+            (
+                "assignee",
+                string("an exact name, self for your own, or \"\" for the unowned"),
+            ),
+            (
+                "lane",
+                string("a cycle lane name, or \"\" for the default area"),
+            ),
+            (
+                "archived",
+                boolean("alone it is the archive; with a filter, the archive joins it"),
+            ),
+            (
+                "blocked",
+                boolean("only the tickets waiting on an open blocker"),
+            ),
+        ])
+    }
+}
+
+impl TicketIdParams {
+    /// The tool input for the one-ticket reads and writes.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[(
+            "id",
+            string("the ticket's UUID or its ref (the lane key and number, TAN-42)"),
+        )])
+    }
+}
+
+impl TicketAddParams {
+    /// The tool input for `ticket.add`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("title", string("one line, trimmed; required")),
+            (
+                "status",
+                string("backlog (default), on-hold, ready, in-progress, in-review or done"),
+            ),
+            (
+                "assignee",
+                string("a name, self to claim it, or human for the human"),
+            ),
+            ("lane", string("the cycle lane; it must exist")),
+            (
+                "origin",
+                string("who filed it, self for this agent; written at add, never changed"),
+            ),
+            (
+                "description",
+                string("the markdown body; no flag is no body"),
+            ),
+        ])
+    }
+}
+
+impl TicketAddFromNoteParams {
+    /// The tool input for `ticket.file`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            (
+                "note",
+                string("the bikeshed-root-relative note the text came from"),
+            ),
+            ("text", string("the selection to file as a ticket")),
+            (
+                "status",
+                string("backlog (default), on-hold, ready, in-progress, in-review or done"),
+            ),
+            (
+                "assignee",
+                string("a name, self to claim it, or human for the human"),
+            ),
+            ("lane", string("the cycle lane; it must exist")),
+            (
+                "origin",
+                string("who filed it, self for this agent; written at add, never changed"),
+            ),
+        ])
+    }
+}
+
+impl TicketSetParams {
+    /// The tool input for `ticket.set`: every field named is changed in one
+    /// write, everything unnamed is left alone.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("id", string("the ticket's UUID or its ref")),
+            (
+                "title",
+                string("one line, trimmed; an empty title is refused"),
+            ),
+            (
+                "status",
+                string("backlog, on-hold, ready, in-progress, in-review or done"),
+            ),
+            (
+                "assignee",
+                string("a name, self, human, or \"\" to clear the owner"),
+            ),
+            (
+                "description",
+                string("the markdown body, or \"\" to clear it"),
+            ),
+        ])
+    }
+}
+
+impl TicketMoveParams {
+    /// The tool input for `ticket.move`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("id", string("the ticket's UUID or its ref")),
+            (
+                "lane",
+                string("the cycle lane, or \"\" for the default area; it must exist"),
+            ),
+            ("index", integer("0-based within the lane; omit to append")),
+        ])
+    }
+}
+
+impl TicketBlockParams {
+    /// The tool input for `ticket.block`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("id", string("the ticket's UUID or its ref")),
+            ("on", string("the ticket it waits on, as a UUID or a ref")),
+        ])
+    }
+}
+
+impl TicketUnblockParams {
+    /// The tool input for `ticket.unblock`: every edge when `on` is absent.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("id", string("the ticket's UUID or its ref")),
+            (
+                "on",
+                string("the edge to remove; omit to remove every edge the ticket has"),
+            ),
+        ])
+    }
+}
+
+impl TicketAnswerParams {
+    /// The tool input for `ticket.answer`: the answer, its status and its next
+    /// owner in one write.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("id", string("the ticket's UUID or its ref")),
+            ("status", string("the status the answer opens; required")),
+            (
+                "assignee",
+                string("the next owner, self for this agent; omit to clear it"),
+            ),
+            ("body", string("the answer body; an empty body is refused")),
+        ])
+    }
+}
+
+impl TicketArchiveParams {
+    /// The tool input for `ticket.archive`: one ticket, or the done ones when
+    /// `id` is absent.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[(
+            "id",
+            string("the ticket's UUID or its ref; omit to archive every done ticket"),
+        )])
+    }
+}
+
+impl CommentAddParams {
+    /// The tool input for `ticket.comment.add`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("id", string("the ticket's UUID or its ref")),
+            ("author", string("who signs the line; write the role out")),
+            ("body", string("the comment body; an empty body is refused")),
+        ])
+    }
+}
+
+impl LaneAddParams {
+    /// The tool input for `lane.add`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("name", string("the lane name; required")),
+            (
+                "abbr",
+                string("the ref key it issues; omit for the first three alphanumerics"),
+            ),
+            (
+                "project",
+                string(
+                    "the parent project; omit to create or reuse the project named for the lane",
+                ),
+            ),
+        ])
+    }
+}
+
+impl LaneRenameParams {
+    /// The tool input for `lane.rename`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("from", string("the lane's current name")),
+            ("to", string("the new name")),
+            (
+                "abbr",
+                string("the new ref key; refused once the key is frozen"),
+            ),
+            (
+                "project",
+                string("the new parent project; omit to keep the lane's project"),
+            ),
+        ])
+    }
+}
+
+impl LaneDeleteParams {
+    /// The tool input for `lane.delete`: members fall back to the default
+    /// area, never deleted.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[("name", string("the lane name"))])
+    }
+}
+
+impl ProjectAddParams {
+    /// The tool input for `project.add`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[("name", string("the project name; required"))])
+    }
+}
+
+impl ProjectRenameParams {
+    /// The tool input for `project.rename`: lanes move with the project.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("from", string("the project's current name")),
+            ("to", string("the new name")),
+        ])
+    }
+}
+
+impl ProjectDeleteParams {
+    /// The tool input for `project.delete`: refused while lanes belong.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[("name", string("the project name"))])
+    }
+}
+
+impl EmptyParams {
+    /// The tool input for the methods that take nothing.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[])
+    }
+}
+
+impl SprintListParams {
+    /// The tool input for `sprint.list`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("lane", string("the cycle lane; omit for every lane")),
+            ("status", string("open or closed; omit for both states")),
+        ])
+    }
+}
+
+impl SprintShowParams {
+    /// The tool input for `sprint.show`: the lane whose open record is
+    /// answered.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[("lane", string("the cycle lane"))])
+    }
+}
+
+impl SprintOpenParams {
+    /// The tool input for `sprint.open`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("lane", string("the cycle lane; required")),
+            ("mode", string("serial (default) or parallel")),
+            (
+                "session",
+                string("the session record the sprint names; omit for $OPENCODE_SESSION_ID"),
+            ),
+        ])
+    }
+}
+
+impl SessionStartParams {
+    /// The tool input for `session.start`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            (
+                "project",
+                string("the project; omit for the working directory's last component"),
+            ),
+            ("agent", string("the pass name; omit for $TANDEM_AGENT")),
+            ("session", string("the record id; omit to mint one")),
+            (
+                "harnessSession",
+                string("the harness session pointer; omit for $OPENCODE_SESSION_ID"),
+            ),
+            (
+                "harnessTransport",
+                string("event-stream or database (default)"),
+            ),
+            ("brief", string("what the pass is for; required")),
+        ])
+    }
+}
+
+impl SessionLinkParams {
+    /// The tool input for `session.link`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("ticket", string("the ticket id or ref the record carries")),
+            (
+                "session",
+                string("the record id; omit for $OPENCODE_SESSION_ID"),
+            ),
+        ])
+    }
+}
+
+impl SessionEndParams {
+    /// The tool input for `session.end`. Absent usage is absent on the record,
+    /// never an invented zero.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            (
+                "session",
+                string("the record id; omit for $OPENCODE_SESSION_ID"),
+            ),
+            (
+                "outcome",
+                string("succeeded, failed, interrupted or unknown (default)"),
+            ),
+            ("summary", string("what landed; omit to leave it unset")),
+            (
+                "tokensInput",
+                integer("the input tokens the harness reported"),
+            ),
+            (
+                "tokensOutput",
+                integer("the output tokens the harness reported"),
+            ),
+            (
+                "tokensReasoning",
+                integer("the reasoning tokens the harness reported"),
+            ),
+            (
+                "tokensCacheRead",
+                integer("the cache-read tokens the harness reported"),
+            ),
+            (
+                "tokensCacheWrite",
+                integer("the cache-write tokens the harness reported"),
+            ),
+            ("cost", number("what the session cost, in dollars")),
+            ("model", string("the model that spent the tokens")),
+            ("skills", string("the skill counts, as name=count pairs")),
+            (
+                "usageFromHarness",
+                boolean(
+                    "read the harness over the loopback API (default true); a harness with no row stamps without usage",
+                ),
+            ),
+            (
+                "harnessUrl",
+                string(
+                    "the explicit harness server URL; omit for TANDEM_HARNESS_URL, else the rendezvous file",
+                ),
+            ),
+        ])
+    }
+}
+
+impl SessionListParams {
+    /// The tool input for `session.list`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("project", string("the project; omit for every project")),
+            (
+                "ticket",
+                string("the ticket id; omit for records that carried nothing in particular"),
+            ),
+            ("status", string("running or ended; omit for both states")),
+        ])
+    }
+}
+
+impl SessionShowParams {
+    /// The tool input for `session.show`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[(
+            "session",
+            string("the record id; omit for $OPENCODE_SESSION_ID"),
+        )])
+    }
+}
+
+impl SprintTicketParams {
+    /// The tool input for `sprint.ticket`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("lane", string("the cycle lane")),
+            ("ticket", string("the ticket id or ref the batch takes")),
+        ])
+    }
+}
+
+impl SprintRunParams {
+    /// The tool input for `sprint.run`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("lane", string("the cycle lane")),
+            ("note", string("the dated entry; an empty note is refused")),
+        ])
+    }
+}
+
+impl SprintCloseParams {
+    /// The tool input for `sprint.close`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("lane", string("the cycle lane")),
+            (
+                "number",
+                integer("the record number; omit for the lane's open record"),
+            ),
+            (
+                "note",
+                string("the close text; omit to close without words"),
+            ),
+        ])
+    }
+}
+
+impl NoteCaptureParams {
+    /// The tool input for `note.capture`.
+    pub fn schema() -> serde_json::Value {
+        object_schema(&[
+            ("kind", string("decision, gotcha, fact or thread; required")),
+            (
+                "project",
+                string("the project; omit for the working directory's last component"),
+            ),
+            (
+                "session",
+                string("the session folder; omit for $OPENCODE_SESSION_ID"),
+            ),
+            ("body", string("the capture body; an empty body is refused")),
+        ])
+    }
 }
 
 /// `setup.install`: the CLI's `--host` and `--force`, unchanged.
@@ -372,7 +1113,14 @@ pub enum Reply {
     CommentList(CommentListReply),
     LaneList(LaneListReply),
     LaneDeletion(LaneDeletionReply),
+    ProjectList(ProjectListReply),
     Archived(ArchivedReply),
+    SprintList(SprintListReply),
+    Sprint(SprintReply),
+    Session(SessionReply),
+    SessionList(SessionListReply),
+    SessionDetail(SessionDetailReply),
+    NotePath(NotePathView),
     Setup(SetupReply),
     Doctor(DoctorReply),
     NoteTree(NoteTreeReply),
@@ -383,6 +1131,7 @@ pub enum Reply {
     NoteBacklinks(NoteBacklinksReply),
     NoteRecoveries(NoteRecoveriesReply),
     Markdown(MarkdownReply),
+    SessionTranscript(SessionTranscriptReply),
 }
 
 /// `markdown.blocks`: the document's blocks, top level first.
@@ -390,6 +1139,20 @@ pub enum Reply {
 #[serde(rename_all = "camelCase")]
 pub struct MarkdownReply {
     pub blocks: Vec<MarkdownBlockView>,
+}
+
+/// `session.transcript`: one page of the record's harness transcript, oldest
+/// first.
+///
+/// `unavailable` names why the harness holds nothing to read: a record with no
+/// pointer, a database that is not there, a row the harness pruned. A page
+/// that reads answers null beside its entries, so the row still draws.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTranscriptReply {
+    pub entries: Vec<TranscriptEntry>,
+    pub next_cursor: Option<i64>,
+    pub unavailable: Option<String>,
 }
 
 /// `note.tree`: the folder and note rows, folders first as the core walks them.
@@ -456,17 +1219,42 @@ pub struct UsageReportReply {
     pub report: UsageReportView,
 }
 
-/// `settings.get`: the settings a face reads.
+/// `settings.get`: the settings a face reads, and `settings.set`'s receipt.
 ///
 /// The roster is the one setting the app reads (`TandemSettings.roster`): the
 /// names the sheet's assignee picker and the board's filter offer. It is the
 /// stored list, or the default when none was ever stored; the typing is the
-/// core's (`domain::Settings`), so neither face parses a settings row. A setting
-/// added later is one more field here, never a second method.
+/// core's (`domain::Settings`), so neither face parses a settings row. A
+/// setting added later is one more field here, never a second method: the
+/// active project answers beside the roster, resolved against the declared
+/// lanes, so a stale focus reads as no focus; the write is its own method
+/// (`settings.set`), because only reads share this reply.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsReply {
     pub roster: Vec<String>,
+    pub active_project: Option<String>,
+}
+
+/// `settings.set`: the roster's whole replacement and the focus to store, each
+/// applied only when its key is present, so one write spells one axis.
+///
+/// `roster`, when present, replaces the stored list whole: absent is not the
+/// empty list but "leave the stored list alone", and an explicitly emptied
+/// list is the human's removal rather than a value no build can read.
+/// `project`, when present, focuses the faces on one declared lane; a blank
+/// value clears back to every lane, and a name no declared lane carries is
+/// refused with nothing written. An absent project leaves the focus alone,
+/// unless the frame spells no roster either: the bare frame is the legacy
+/// bare write, which clears the focus and leaves the roster alone (an
+/// explicit null reads as absent on the wire, so clearing the focus never
+/// empties the roster). Optional throughout so the frame's
+/// empty-params round-trip still parses.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SettingsSetParams {
+    pub roster: Option<Vec<String>>,
+    pub project: Option<String>,
 }
 
 /// `ticket.list`: the full snapshot and the revision it is a snapshot of.
@@ -531,12 +1319,88 @@ pub struct LaneDeletionReply {
     pub moved: usize,
 }
 
+/// One project and its lanes, in render order: the answer to `project list`
+/// and every project write's receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectEntry {
+    pub name: String,
+    pub lanes: Vec<String>,
+}
+
+/// `project.list`, `project.add`, `project.rename`, `project.delete`: every
+/// project in render order, each with its lanes in lane order.
+///
+/// The `revision` is the number the projects are a snapshot of: the write's
+/// own for a mutation, the read transaction's for `project.list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectListReply {
+    pub revision: i64,
+    pub projects: Vec<ProjectEntry>,
+}
+
 /// `ticket.archive` without an id: how many tickets the sweep archived.
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ArchivedReply {
     pub revision: i64,
     pub archived: usize,
+}
+
+/// `sprint.list`: the lane's records, newest opened first, at the revision
+/// they are a snapshot of.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SprintListReply {
+    pub revision: i64,
+    pub sprints: Vec<Sprint>,
+}
+
+/// `sprint.show` and `sprint.open`: one record at its revision, with the note
+/// when the open changed nothing (a lane with an open sprint keeps it).
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SprintReply {
+    pub revision: i64,
+    pub sprint: Sprint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `session.start`, `session.link` and `session.end`: the record at the
+/// revision the write produced, with the note when the call changed nothing
+/// (a second `start` or `end` keeps the first stamp) or when the harness had
+/// no usage to report.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionReply {
+    pub revision: i64,
+    pub session: crate::domain::session::Session,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `session.list`: the records, newest first, at the revision they are a
+/// snapshot of.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionListReply {
+    pub revision: i64,
+    pub sessions: Vec<crate::domain::session::Session>,
+}
+
+/// `session.show`: one record at its revision, with the note paths the
+/// session filed and the note when the call changed nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDetailReply {
+    pub revision: i64,
+    pub session: crate::domain::session::Session,
+    /// Derived from the capture files, never stored (ADR 0016).
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// One agent host's root, as the Settings surface shows it.
