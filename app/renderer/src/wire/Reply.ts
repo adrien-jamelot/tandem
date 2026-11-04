@@ -9,12 +9,20 @@ import type { MarkdownReply } from "./MarkdownReply";
 import type { NoteBacklinksReply } from "./NoteBacklinksReply";
 import type { NoteHealthReply } from "./NoteHealthReply";
 import type { NoteMoveReply } from "./NoteMoveReply";
+import type { NotePathView } from "./NotePathView";
 import type { NoteReadReply } from "./NoteReadReply";
 import type { NoteRecoveriesReply } from "./NoteRecoveriesReply";
 import type { NoteTreeReply } from "./NoteTreeReply";
 import type { NoteWriteReply } from "./NoteWriteReply";
+import type { ProjectListReply } from "./ProjectListReply";
+import type { SessionDetailReply } from "./SessionDetailReply";
+import type { SessionListReply } from "./SessionListReply";
+import type { SessionReply } from "./SessionReply";
+import type { SessionTranscriptReply } from "./SessionTranscriptReply";
 import type { SettingsReply } from "./SettingsReply";
 import type { SetupReply } from "./SetupReply";
+import type { SprintListReply } from "./SprintListReply";
+import type { SprintReply } from "./SprintReply";
 import type { TicketListReply } from "./TicketListReply";
 import type { TicketReply } from "./TicketReply";
 import type { UsageReportReply } from "./UsageReportReply";
@@ -23,4 +31,4 @@ import type { UsageReportReply } from "./UsageReportReply";
  * What a method answers. Untagged: the client knows which method it called,
  * so the payload needs no second tag on the wire.
  */
-export type Reply = TicketListReply | UsageReportReply | SettingsReply | TicketReply | CommentReply | CommentListReply | LaneListReply | LaneDeletionReply | ArchivedReply | SetupReply | DoctorReply | NoteTreeReply | NoteReadReply | NoteWriteReply | NoteMoveReply | NoteHealthReply | NoteBacklinksReply | NoteRecoveriesReply | MarkdownReply;
+export type Reply = TicketListReply | UsageReportReply | SettingsReply | TicketReply | CommentReply | CommentListReply | LaneListReply | LaneDeletionReply | ProjectListReply | ArchivedReply | SprintListReply | SprintReply | SessionReply | SessionListReply | SessionDetailReply | NotePathView | SetupReply | DoctorReply | NoteTreeReply | NoteReadReply | NoteWriteReply | NoteMoveReply | NoteHealthReply | NoteBacklinksReply | NoteRecoveriesReply | MarkdownReply | SessionTranscriptReply;

@@ -233,6 +233,37 @@ impl LaneDeletionView {
     }
 }
 
+/// One project and its lanes, in render order: the CLI's `project list` row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProjectView {
+    pub name: String,
+    pub lanes: Vec<String>,
+}
+
+/// `project list`, `project add`, `project rename`, `project delete`:
+/// `{"projects": [{"name": ..., "lanes": [...]}]}` in project order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProjectList {
+    pub projects: Vec<ProjectView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl ProjectList {
+    pub fn new(projects: &[crate::domain::ProjectWithLanes], note: Option<String>) -> Self {
+        Self {
+            projects: projects
+                .iter()
+                .map(|entry| ProjectView {
+                    name: entry.name.clone(),
+                    lanes: entry.lanes.clone(),
+                })
+                .collect(),
+            note,
+        }
+    }
+}
+
 /// `ticket archive` without an id: `{"archived": n}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ArchivedView {
@@ -281,7 +312,7 @@ pub struct SprintList {
 }
 
 /// `note rename` / `note capture`: `{"path": ...}`, and the duplicate's note.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 pub struct NotePathView {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -514,6 +545,12 @@ pub struct UsageRowView {
     /// report: the face writes the width and computes no percentage (PRT-15).
     pub bar_percent: f64,
     pub tokens: UsageTokensView,
+    /// The per-reported-record averages, in the tokens' five-piece shape: the
+    /// face reads them in Average mode and derives nothing (TAN-263).
+    pub average_tokens: UsageTokensView,
+    /// The reported cost over `reported`, at full precision for the face's
+    /// `money`; `0.0` when the row reported nothing.
+    pub average_cost: f64,
     /// The records behind the row, newest start first.
     pub sessions: Vec<UsageSessionView>,
 }
@@ -528,6 +565,8 @@ impl UsageRowView {
             cost: row.cost,
             bar_percent: row.bar_percent,
             tokens: UsageTokensView::new(&row.tokens),
+            average_tokens: UsageTokensView::new(&row.average_tokens),
+            average_cost: row.average_cost,
             sessions: row.sessions.iter().map(UsageSessionView::new).collect(),
         }
     }

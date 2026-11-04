@@ -24,7 +24,7 @@ fn temp_board() -> (Sandbox, Board) {
 #[test]
 fn a_ticket_round_trips_status_archived_description_assignee_and_lane() {
     let (sandbox, board) = temp_board();
-    board.add_lane("Core", None).unwrap();
+    board.add_lane("Core", None, None).unwrap();
     let added = board
         .add(
             "Ship the model",
@@ -227,7 +227,7 @@ fn add_stamps_its_origin_defaulting_to_human_with_the_assignees_spelling_rules()
 #[test]
 fn origin_is_written_once_at_add_and_set_move_place_reopen_leave_it() {
     let (_sandbox, board) = temp_board();
-    board.add_lane("Core", None).unwrap();
+    board.add_lane("Core", None, None).unwrap();
     let added = board
         .add(
             "Task",
@@ -247,6 +247,7 @@ fn origin_is_written_once_at_add_and_set_move_place_reopen_leave_it() {
                 status: Edit::Set(Status::InProgress),
                 assignee: Edit::Set(Some("human")),
                 description: Edit::Set(Some("Body")),
+                append_description: Edit::Unchanged,
                 archived: Edit::Set(true),
             },
         )
@@ -325,7 +326,7 @@ fn reopening_after_done_lands_in_backlog() {
 #[test]
 fn set_changes_only_the_fields_it_names() {
     let (_sandbox, board) = temp_board();
-    board.add_lane("Core", None).unwrap();
+    board.add_lane("Core", None, None).unwrap();
     let added = board
         .add(
             "Title",
@@ -421,6 +422,32 @@ fn set_trims_text_treats_an_empty_value_as_cleared_and_stores_human_lowercase() 
     assert_eq!(set.description.as_deref(), Some("body"));
     assert_eq!(set.assignee.as_deref(), Some("human"));
 
+    // Leaving `human` with no answer is the hold only `ticket answer` closes.
+    let refused = board
+        .set(
+            &added.id.to_string(),
+            SetFields {
+                assignee: Edit::Set(Some("")),
+                ..SetFields::default()
+            },
+        )
+        .unwrap_err();
+    assert!(
+        refused.message().contains("ticket answer"),
+        "the refusal names the one write that closes the hold: {}",
+        refused.message()
+    );
+
+    // Once answered, an empty value clears the owner again.
+    board
+        .answer(
+            &added.id.to_string(),
+            Status::Ready,
+            Some("human"),
+            "A.",
+            1_762_000_000,
+        )
+        .unwrap();
     let cleared = board
         .set(
             &added.id.to_string(),

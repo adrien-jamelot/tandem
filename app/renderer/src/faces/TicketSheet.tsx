@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
-import type { Call } from '../../../src/shared/bridge'
+import type { Method } from '../../../src/shared/bridge'
 import { STATUSES, assigneeChoices } from '../shell/board'
+import { passButtons, type PassKind } from '../shell/pass'
 import {
   EMPTY_COMMENT_REFUSAL,
   answerBlock,
@@ -25,10 +26,13 @@ import type { MarkdownBlockView } from '../wire/MarkdownBlockView'
 import type { Reply } from '../wire/Reply'
 import type { TicketDetail } from '../wire/TicketDetail'
 import { MarkdownDocument } from './MarkdownDocument'
+import { SessionsSection } from './SessionsSection'
 
 export type TicketSheetProps = {
   /** The sheet's subject: the one selection every entry point sets. */
   ticketId: string
+  /** The deep-linked Tandem record id, or null when the link names none. */
+  expandedSession: string | null
   /** The board's declared lanes, in render order. */
   lanes: string[]
   /** The names the assignee picker offers, off-roster names aside. */
@@ -51,6 +55,8 @@ function blocksOf(reply: Reply): MarkdownBlockView[] | null {
   return 'blocks' in reply ? reply.blocks : null
 }
 
+const CLAIM_CHANGED = 'The claim landed, but the comment did not.'
+
 /**
  * The ticket sheet: one dialog over whichever face opened it, drawn once for
  * the list row, the board card and the note's ticket link (`TicketSheet` in the
@@ -66,6 +72,7 @@ function blocksOf(reply: Reply): MarkdownBlockView[] | null {
  */
 export function TicketSheet({
   ticketId,
+  expandedSession,
   lanes,
   roster,
   revision,
@@ -102,7 +109,7 @@ export function TicketSheet({
   const [creating, setCreating] = useState(false)
   const [laneName, setLaneName] = useState('')
   const [laneKey, setLaneKey] = useState('')
-  const [asking, setAsking] = useState<{ name: string; abbr: string | null } | null>(null)
+  const [asking, setAsking] = useState<{ name: string; abbr: string | null; project: string | null } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameTo, setRenameTo] = useState('')
   const [renameKey, setRenameKey] = useState('')
@@ -210,8 +217,12 @@ export function TicketSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket, title, status, assignee, commentDraft, revision, sheetRevision])
 
-  async function write(call: Call, expected: number | null = revision): Promise<boolean> {
-    const outcome = await onWrite(call, expected)
+  async function write(
+    call: Method,
+    expected: number | null = revision,
+    followUp?: string,
+  ): Promise<boolean> {
+    const outcome = await onWrite(call, expected, followUp)
     if (!outcome.ok) {
       setNotice(outcome.message)
       // A refusal means the store moved under the sheet, or it would not take
@@ -270,6 +281,31 @@ export function TicketSheet({
     if (written) setCommentDraft('')
   }
 
+  /**
+   * One pass request's writes, in the helper's order. A second write is a
+   * follow-up: the first one moved the listing, so it is exempt from the
+   * revision guard and its refusal says that the claim already landed.
+   */
+  async function requestPass(kind: PassKind): Promise<void> {
+    if (ticket === null) return
+    const button = passButtons(
+      { id: ticket.id, status: ticket.status, blocked: ticket.blocked, assignee: ticket.assignee },
+      comments.map((comment) => comment.body),
+    ).find((entry) => entry.kind === kind)
+    if (button === undefined || !button.enabled) return
+    for (const [at, call] of button.calls.entries()) {
+      const written = await write(
+        call,
+        // The claim edits the ticket the sheet read, so it pins to that read;
+        // the comment follows the claim and is exempt from the guard.
+        call.method === 'ticket.set' ? (sheetRevision ?? revision) : null,
+        at === 0 ? undefined : CLAIM_CHANGED,
+      )
+      if (!written) return
+    }
+    setNotice(null)
+  }
+
   async function moveToLane(lane: string | null): Promise<void> {
     if (ticket === null || ticket.lane === lane) return
     // A move appends to the lane, the same instruction a drop makes; the lane
@@ -292,7 +328,7 @@ export function TicketSheet({
     if (asking === null) return
     const written = await write({
       method: 'lane.add',
-      params: { name: asking.name, abbr: asking.abbr },
+      params: { name: asking.name, abbr: asking.abbr, project: asking.project ?? null },
     })
     if (written) {
       setAsking(null)
@@ -312,7 +348,7 @@ export function TicketSheet({
     }
     const written = await write({
       method: 'lane.rename',
-      params: { from: params.from, to: params.to, abbr: params.abbr },
+      params: { from: params.from, to: params.to, abbr: params.abbr, project: params.project ?? null },
     })
     if (written) {
       setRenaming(null)
@@ -378,57 +414,98 @@ export function TicketSheet({
           error === null ? <p className="sheet__reading">Reading the ticket…</p> : null
         ) : (
           <div className="sheet__body">
-            <input
-              className="sheet__title"
-              value={title}
-              aria-label="Title"
-              onChange={(event) => setTitle(event.target.value)}
-            />
+            <div className="sheet__sticky">
+              <input
+                className="sheet__title"
+                value={title}
+                aria-label="Title"
+                onChange={(event) => setTitle(event.target.value)}
+              />
 
-            <div className="sheet__facts">
-              <label className="sheet__fact">
-                <span className="sheet__fact-label">Status</span>
-                <select
-                  className="sheet__select"
-                  aria-label="Status"
-                  value={status}
-                  onChange={(event) => setStatus(event.target.value)}
+              <div className="sheet__facts">
+                <label className="sheet__fact">
+                  <span className="sheet__fact-label">Status</span>
+                  <span className="sheet__status-row">
+                    <span
+                      className="sheet__status-dot"
+                      data-status={status}
+                      aria-hidden="true"
+                    />
+                    <select
+                      className="sheet__select"
+                      data-status={status}
+                      aria-label="Status"
+                      value={status}
+                      onChange={(event) => setStatus(event.target.value)}
+                    >
+                      {STATUSES.map((entry) => (
+                        <option key={entry.value} value={entry.value}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
+                </label>
+
+                <label className="sheet__fact">
+                  <span className="sheet__fact-label">Assignee</span>
+                  <select
+                    className="sheet__select"
+                    aria-label="Assignee"
+                    value={assignee ?? ''}
+                    onChange={(event) =>
+                      setAssignee(event.target.value === '' ? null : event.target.value)
+                    }
+                  >
+                    {choices.map((choice) => (
+                      <option key={choice.value ?? ''} value={choice.value ?? ''}>
+                        {choice.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  type="button"
+                  className="sheet__save"
+                  disabled={!canSave({ title })}
+                  onClick={() => void save()}
                 >
-                  {STATUSES.map((entry) => (
-                    <option key={entry.value} value={entry.value}>
-                      {entry.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="sheet__fact">
-                <span className="sheet__fact-label">Assignee</span>
-                <select
-                  className="sheet__select"
-                  aria-label="Assignee"
-                  value={assignee ?? ''}
-                  onChange={(event) =>
-                    setAssignee(event.target.value === '' ? null : event.target.value)
-                  }
-                >
-                  {choices.map((choice) => (
-                    <option key={choice.value ?? ''} value={choice.value ?? ''}>
-                      {choice.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <button
-                type="button"
-                className="sheet__save"
-                disabled={!canSave({ title })}
-                onClick={() => void save()}
-              >
-                Save
-              </button>
+                  Save
+                </button>
+              </div>
             </div>
+
+            <section className="sheet__passes" aria-label="Agent passes">
+              <h2 className="sheet__section-title">
+                Agent passes: a request the next dispatch picks up, never a run
+              </h2>
+              <ul className="sheet__pass-rows">
+                {passButtons(
+                  {
+                    id: ticket.id,
+                    status: ticket.status,
+                    blocked: ticket.blocked,
+                    assignee: ticket.assignee,
+                  },
+                  comments.map((comment) => comment.body),
+                ).map((button) => (
+                  <li key={button.kind} className="sheet__pass-row">
+                    <button
+                      type="button"
+                      className="sheet__button"
+                      disabled={!button.enabled}
+                      onClick={() => void requestPass(button.kind)}
+                    >
+                      {button.label}
+                    </button>
+                    {button.reason === null ? null : (
+                      <span className="sheet__pass-reason">{button.reason}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
 
             {holdOpen(ticket) ? (
               <p className="sheet__hold" role="status">
@@ -488,15 +565,16 @@ export function TicketSheet({
 
             <section className="sheet__description" aria-label="Description">
               <header className="sheet__section-header">
-                <h2 className="sheet__section-title">Description: markdown, saved with the ticket</h2>
+                <h2 className="sheet__section-title">Description</h2>
                 <button
                   type="button"
                   className="sheet__toggle"
                   onClick={() => setPreviewing((current) => !current)}
                 >
-                  {previewing ? 'Edit source' : 'Preview'}
+                  {previewing ? 'View source' : 'Preview'}
                 </button>
               </header>
+              <p className="sheet__note">Append-only: additions land under the stored text and never overwrite it.</p>
 
               {previewing ? (
                 <div className="sheet__preview">
@@ -511,7 +589,9 @@ export function TicketSheet({
                   )}
                 </div>
               ) : (
-                <pre className="sheet__source">{ticket.description ?? ''}</pre>
+                <pre className="sheet__source" aria-label="Stored description, read-only">
+                  {ticket.description ?? ''}
+                </pre>
               )}
 
               <label className="sheet__addition">
@@ -661,7 +741,7 @@ export function TicketSheet({
             </section>
 
             <section className="sheet__discussion" aria-label="Comments">
-              <h2 className="sheet__section-title">Comments: the ticket's discussion log</h2>
+              <h2 className="sheet__section-title">Comments</h2>
               {logError !== null ? (
                 <p className="sheet__refusal" role="alert">
                   The log could not be read. {logError}
@@ -685,7 +765,7 @@ export function TicketSheet({
               )}
 
               <label className="sheet__addition">
-                <span className="sheet__fact-label">Add a comment: appended to the log, signed as you</span>
+                <span className="sheet__fact-label">Add a comment</span>
                 <textarea
                   className="sheet__addition-field"
                   aria-label="Add a comment"
@@ -706,6 +786,12 @@ export function TicketSheet({
                 </button>
               </div>
             </section>
+
+            <SessionsSection
+              ticketId={ticket.id}
+              revision={revision}
+              expandedSession={expandedSession}
+            />
 
             <footer className="sheet__footer">
               <span className="sheet__hint">{shortcutHint()}</span>

@@ -8,6 +8,7 @@ import type { Reply } from '../wire/Reply'
 import type { TicketSummary } from '../wire/TicketSummary'
 import {
   ancestorsOf,
+  focusNodes,
   folderPaths,
   notePaths,
   resolveWikilink,
@@ -26,10 +27,11 @@ import {
 } from '../shell/note'
 import { BikeshedEditor } from './BikeshedEditor'
 import { BikeshedTree } from './BikeshedTree'
-import { Face } from './Face'
+import { FocusControl } from './FocusControl'
 import { NoteRail } from './NoteRail'
 
 const HIDDEN_KEY = 'tandem.bikeshed.hidden'
+const RAIL_KEY = 'tandem.bikeshed.rail-open'
 
 /** `ticket.list`'s absent flags: the open board, the tickets a note may link. */
 const OPEN_BOARD = {
@@ -80,10 +82,19 @@ function message(error: unknown): string {
 export type BikeshedFaceProps = {
   /** The note's ticket rows open the one sheet, over the bikeshed. */
   onOpenTicket?: (ticket: TicketSummary) => void
+  /** The declared lanes, in render order, for the focus picker. */
+  lanes: string[]
+  /** The stored focus: the project the tree draws, or null for the vault. */
+  activeProject: string | null
+  /** Persist a new focus; null clears back to the whole vault. */
+  onPickProject: (lane: string | null) => void
 }
 
-export function BikeshedFace({ onOpenTicket }: BikeshedFaceProps) {
+export function BikeshedFace({ onOpenTicket, lanes, activeProject, onPickProject }: BikeshedFaceProps) {
   const [hidden, setHidden] = useState(() => window.localStorage.getItem(HIDDEN_KEY) === 'true')
+  const [railOpen, setRailOpen] = useState(
+    () => window.localStorage.getItem(RAIL_KEY) !== 'false',
+  )
   const [nodes, setNodes] = useState<NoteNodeView[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [open, setOpen] = useState<NoteBuffer | null>(null)
@@ -96,12 +107,17 @@ export function BikeshedFace({ onOpenTicket }: BikeshedFaceProps) {
   const [health, setHealth] = useState<BikeshedHealth | null>(null)
   const [recoveries, setRecoveries] = useState<RecoveryView[]>([])
   const [token, setToken] = useState(0)
+  // The show-all escape: the whole vault without clearing the stored focus.
+  const [showAll, setShowAll] = useState(false)
   const seeded = useRef(false)
   const openRef = useRef<NoteBuffer | null>(null)
   openRef.current = open
   const savingRef = useRef(false)
 
   const noteIndex = useMemo(() => notePaths(nodes), [nodes])
+  // The tree the focus draws: the focused project's folder alone, or the
+  // whole vault when nothing is focused or no folder answers the focus.
+  const drawn = focusNodes(nodes, showAll ? null : activeProject)
 
   async function refreshVault(): Promise<void> {
     try {
@@ -382,8 +398,23 @@ export function BikeshedFace({ onOpenTicket }: BikeshedFaceProps) {
     setHidden(next)
   }
 
+  function toggleRail(): void {
+    setRailOpen((current) => {
+      const next = !current
+      window.localStorage.setItem(RAIL_KEY, next ? 'true' : 'false')
+      return next
+    })
+  }
+
   return (
-    <Face wide title="Bikeshed" blurb="The notes vault: tree, editor, backlinks and health.">
+    <section className="face face--wide bikeshed-face" aria-label="Bikeshed">
+      <FocusControl
+        lanes={lanes}
+        active={activeProject}
+        showAll={showAll}
+        onPick={onPickProject}
+        onToggleShowAll={() => setShowAll((current) => !current)}
+      />
       {error === null ? null : (
         <div className="banner" role="alert">
           <span>{error}</span>
@@ -434,7 +465,7 @@ export function BikeshedFace({ onOpenTicket }: BikeshedFaceProps) {
 
       <div className="bikeshed">
         <BikeshedTree
-          nodes={nodes}
+          nodes={drawn}
           expanded={expanded}
           hidden={hidden}
           openPath={open?.path ?? null}
@@ -458,17 +489,22 @@ export function BikeshedFace({ onOpenTicket }: BikeshedFaceProps) {
             token={token}
             noteIndex={noteIndex}
             saving={saving}
+            railOpen={railOpen}
+            railCount={backlinks.length + linked.length}
+            onToggleRail={toggleRail}
             onMessage={onEditorMessage}
           />
-          <NoteRail
-            backlinks={backlinks}
-            linked={linked}
-            recoveries={recoveries}
-            onOpenNote={(path) => void openNote(path)}
-            onOpenTicket={onOpenTicket}
-          />
+          {railOpen ? (
+            <NoteRail
+              backlinks={backlinks}
+              linked={linked}
+              recoveries={recoveries}
+              onOpenNote={(path) => void openNote(path)}
+              onOpenTicket={onOpenTicket}
+            />
+          ) : null}
         </div>
       </div>
-    </Face>
+    </section>
   )
 }

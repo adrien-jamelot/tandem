@@ -4,6 +4,7 @@ import type { NoteNodeView } from '../renderer/src/wire/NoteNodeView'
 import {
   canReparent,
   flattenTree,
+  focusNodes,
   healthSummary,
   isHiddenPath,
   recoverableLabel,
@@ -93,6 +94,22 @@ describe('the drag that re-parents', () => {
   })
 })
 
+describe('the project focus', () => {
+  it('draws the whole vault when nothing is focused: the show-all escape', () => {
+    expect(focusNodes(FOLDERS, null)).toBe(FOLDERS)
+  })
+
+  it('draws the focused project folder alone, matched case-insensitively', () => {
+    const focused = focusNodes(FOLDERS, 'Fixture')
+    expect(focused.map((node) => node.path)).toEqual(['daily', 'projects', 'Index.md'])
+    expect(focused[1]?.children.map((child) => child.path)).toEqual(['projects/fixture'])
+  })
+
+  it('falls back to the whole vault when no project folder matches, so a stale focus hides nothing', () => {
+    expect(focusNodes(FOLDERS, 'Retro')).toBe(FOLDERS)
+  })
+})
+
 describe('a wikilink click', () => {
   const paths = ['Index.md', 'daily/2026-10-30.md', 'projects/fixture/fixture.md']
 
@@ -138,15 +155,30 @@ describe('the health panel summary', () => {
 })
 
 describe('a recovery', () => {
-  it('names the temp as a draft, never as an error', () => {
+  it('names the draft in human words, never the tmp path or byte count', () => {
     const label = recoverableLabel({
       file: '.note-0000-0000-0000-000000000001.tmp',
       bytes: 42,
       modifiedAt: '2026-10-30T12:00:00Z',
     })
-    expect(label).toContain('draft')
-    expect(label).toContain('.note-0000-0000-0000-000000000001.tmp')
+    expect(label.toLowerCase()).toContain('draft')
+    expect(label.toLowerCase()).toContain('interrupted save')
+    expect(label).not.toContain('.note-')
+    expect(label).not.toContain('.tmp')
+    expect(label).not.toContain('42')
+    expect(label.toLowerCase()).not.toContain('bytes')
     expect(label.toLowerCase()).not.toContain('error')
+  })
+
+  it('names the folder a nested temp was kept in, not the tmp file', () => {
+    const label = recoverableLabel({
+      file: 'daily/.note-0000-0000-0000-000000000001.tmp',
+      bytes: 42,
+      modifiedAt: '2026-10-30T12:00:00Z',
+    })
+    expect(label).toContain('daily')
+    expect(label).not.toContain('.note-')
+    expect(label).not.toContain('.tmp')
   })
 })
 

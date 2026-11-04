@@ -18,7 +18,7 @@ writes one PNG per scene into this folder, and rewrites the table below from
     npm ci
     npm run binary
     TANDEM_SHOTS_HOME=../Fixtures/port/Home npm run shots
-    TANDEM_SHOTS_HOME=../Fixtures/port/Board npx playwright test tests/shots/tickets.shots.ts
+    TANDEM_SHOTS_HOME=../Fixtures/port/Board npx playwright test tests/shots/tickets.shots.ts tests/shots/focus.shots.ts
 
 `TANDEM_SHOTS_HOME` is required, and it must resolve under the repository's
 `Fixtures/`: a run that names no home is refused, and so is `~/.tandem` or any
@@ -28,8 +28,37 @@ home, so no run writes into the fixture.
 The port has two committed homes. `Fixtures/port/Home` is the contract home: the
 four session records and two board tickets the shell, Usage and Settings scenes
 read. `Fixtures/port/Board` is the 78-ticket board home, and the Tickets scenes
-are shot on it. CI runs the first command above; the Tickets pictures in this
-folder are the second.
+are shot on it. CI runs both commands above in order; the Tickets pictures in
+this folder are the second.
+
+## The agent loop
+
+A session iterating on a face looks without dirtying the committed pictures:
+set `TANDEM_SHOTS_OUT` to a scratch directory and run one spec. The PNG lands
+under the named directory, the committed folder is untouched, and the catalogue
+is not rewritten:
+
+    cd app
+    TANDEM_SHOTS_HOME=../Fixtures/port/Home TANDEM_SHOTS_OUT=/tmp/shots-look npx playwright test tests/shots/shell.shots.ts
+
+Run a single spec file while iterating; run both home commands to regenerate
+every committed picture before opening the PR:
+
+    TANDEM_SHOTS_HOME=../Fixtures/port/Home npm run shots
+    TANDEM_SHOTS_HOME=../Fixtures/port/Board npx playwright test tests/shots/tickets.shots.ts tests/shots/focus.shots.ts
+
+CI runs both commands in this order on the Linux runner under a virtual display
+(`.github/workflows/app.yml`), so a deliberately broken selector is a red job
+rather than a human reading a diff.
+
+Three traps, and what the harness does about each. Paint: the clock is pinned
+to `2026-10-30T12:00:00Z` with `TZ` at UTC, every scene asserts its face before
+it captures, and no step sleeps for a paint. Focus: one worker, one app per
+test, and the app is closed after every test, so a second window never steals
+the shot. Seed: the named home is copied to the fixed scratch seed
+(`/tmp/tandem-shots/Home`) before every test and the app opens the copy, so a
+spec that writes cannot change the next spec's picture and no run writes into
+the committed fixture.
 
 The seed is the named fixture home plus a fixed clock: the page's `Date` is
 pinned to `2026-10-30T12:00:00Z` before the first application script runs, and
@@ -49,9 +78,9 @@ save, the CLI as a second writer) cannot change the next spec's picture or its
 assertions. A failing spec fails the run, and the catalogue is rewritten only
 when every scene's picture exists, so a picture and its row cannot drift.
 
-CI runs the same command on the Linux runner under a virtual display
-(`.github/workflows/app.yml`), so a deliberately broken selector is a red job
-rather than a human reading a diff.
+CI runs both home commands on the Linux runner under a virtual display
+(`.github/workflows/app.yml`, the agent loop above), so a deliberately broken
+selector is a red job rather than a human reading a diff.
 
 The suite asserts a face, not only its contents: every photographed face checks
 one computed style against the token it reads from
@@ -61,10 +90,13 @@ DOM, the same row ids and the same counts on unstyled text.
 
 | file | what it shows |
 | --- | --- |
-| `electron-shell.png` | the shell at its 760 pt floor: the wordmark, the four kept tabs (Tickets, Bikeshed, Usage, Settings), the Tickets face it opens on, and the store revision read over `rpc` |
-| `usage-face.png` | the **Usage** face over the fixture home: the reported spend and its coverage, the ticket rows and their arithmetic, the Day/Model/Agent/Ticket picker, and a ticket row rolled down to the records behind it, each naming its session, agent, model, local start, cost, tokens and the tickets it carried |
+| `electron-shell.png` | the shell at its 760 pt floor: the wordmark, the five tabs (Tickets, Bikeshed, Usage, Workflow, Settings), the Tickets face it opens on, and the store revision read over `rpc` |
+| `usage-face.png` | the **Usage** face over the fixture home: the reported spend and its coverage, the cost-per-day bar chart above the pickers, the ticket rows and their arithmetic, the Day/Model/Agent/Ticket picker beside the Total/Average per-record toggle, and a ticket row rolled down to the records behind it, each naming its session, agent, model, local start, cost, tokens and the tickets it carried |
+| `workflow-face.png` | the **Workflow** face over the fixture home with an open sprint: the lane picker and lifecycle controls, the sprint header with its stored mode, the pass DAG (Refine, Build, Review, Retro, Done) with its handoffs and batch tallies, the batch tickets on the nodes by ticket status, and the run log below |
 | `bikeshed-face.png` | the **Bikeshed** face over the fixture home: the scaffold tree with its reveal control, the committed CodeMirror bundle editing the fixture project note in its own frame, the Backlinks dock naming the Index note, the Health panel reporting the daily note as an orphan, and a draft a killed save left named as a recovery |
-| `settings-face.png` | the **Settings** face over the fixture home: the home, the bikeshed, the three agent hosts, the theme rule, the bundled and installed versions, and the doctor's checks each named with its state and detail |
+| `settings-face.png` | the **Settings** face over the fixture home: the home, the bikeshed, the three agent hosts, the theme rule, the bundled and installed versions, the doctor's checks each named with its state and detail, and the harness sign-in section |
 | `tickets-list.png` | the **Tickets** face in its list layout over the port's 78-ticket board home (`Fixtures/port/Board`): the quick-add, the Open/Done/All scopes with their counts, the status, assignee and lane filters, the search, and the lane-grouped rows with each ticket's ref, title, status, assignee, lane and blocked mark |
 | `tickets-board.png` | the same face on the same 78-ticket board home in its board layout: the lanes as rows, each named with its count and holding one cell per status, the six status columns with On hold parked last, and the same rows set on cards in the cell of their lane and status |
+| `tickets-focus.png` | the **Tickets** face with a project focus set: the focus control naming the active lane with its show-all escape, and the board drawing that lane row alone |
 | `tickets-keyboard.png` | the keyboard-only pass over the 78-ticket board home: a row selected with the arrows, the quick-add reached with the platform modifier and N, the search with the platform modifier and F, and a ticket moved one status over, inside its own lane, with Option and the arrows |
+| `ticket-sheet-passes.png` | the ticket sheet over the fixture home with its pass-request buttons: refine enabled on a new backlog ticket, build and review disabled with their reasons in place, each a request the next dispatch picks up |

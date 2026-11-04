@@ -2,16 +2,16 @@
 
 [![CI](https://github.com/gianniacquisto/tandem/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/gianniacquisto/tandem/actions/workflows/release.yml)
 [![Release](https://img.shields.io/github/v/release/gianniacquisto/tandem)](https://github.com/gianniacquisto/tandem/releases/latest)
-[![macOS](https://img.shields.io/badge/macOS-27%2B%20%2B%20Apple%20silicon-lightgrey.svg)](https://github.com/gianniacquisto/tandem/releases/latest)
+[![shipped app: macOS 27+ on Apple silicon](https://img.shields.io/badge/shipped%20app-macOS%2027%2B%20on%20Apple%20silicon-lightgrey.svg)](https://github.com/gianniacquisto/tandem/releases/latest)
 [![Licence](https://img.shields.io/badge/licence-MIT-sage.svg)](LICENSE)
 
 ![The tandem bike — the app's brand mark and icon](Resources/TandemBike.jpg)
 
-**Tandem is a macOS board for you and your AI coding agents.** One ticket list, one board by status and lane, an inbox for what the agents owe you, and the bikeshed — a folder of markdown notes — that doubles as the agents' memory. Your agent and you share one list: it files tickets you see, and it sees the ones you close. Everything runs on your Mac today: one SQLite database and a folder of markdown notes you own, with no account to create. A hosted core is a later deployment shape, so the boundary is today's, not the product's.
+**Tandem is a board for you and your AI coding agents that ships as a macOS app.** One ticket list, one board by status and lane, an inbox for what the agents owe you, and the bikeshed — a folder of markdown notes — that doubles as the agents' memory. Your agent and you share one list: it files tickets you see, and it sees the ones you close. Everything runs on your Mac today: one SQLite database and a folder of markdown notes you own, with no account to create. A hosted core is a later deployment shape, so the boundary is today's, not the product's.
 
 ## Install
 
-macOS 27 (Golden Gate) or later, on an Apple silicon Mac.
+The shipped app needs macOS 27 (Golden Gate) or later, on an Apple silicon Mac.
 
 ```sh
 brew install --cask gianniacquisto/tap/tandem
@@ -51,7 +51,7 @@ tandem-cli doctor
 
 One JSON report of where your state lives and whether it is healthy: the home directory, the store, the bikeshed, the comment log, the write lock, the installed app and the agent skills. It exits `1` when something needs attention, so it is the quickest way to know a fresh install is whole.
 
-### What it runs on
+### What the shipped app runs on
 
 | | Supported |
 | --- | --- |
@@ -60,6 +60,14 @@ One JSON report of where your state lives and whether it is healthy: the home di
 | Agent hosts | OpenCode (skills, agent prompts, `AGENTS.md`), Claude Code (skills), and any host that reads skills from a directory |
 | Network | none today, the app and the CLI are local |
 | Accounts | none today, the state is files in your home directory |
+
+That table is the shipped app: every release publishes macOS artifacts only.
+Underneath, the repo builds and tests cross-platform. CI runs the Rust suite
+and the app suite (typecheck, tests, packaging, artifact check, and smoke
+on macOS and Linux only) on
+macOS, Windows and Ubuntu runners, so a checkout on any of the three builds
+and tests what it can run. [CONTRIBUTING.md](CONTRIBUTING.md) is the
+per-platform on-ramp.
 
 ## What it does
 
@@ -142,6 +150,7 @@ tandem-cli ticket add --title <string> [--status <value>] [--assignee <name|self
                       [--lane <name>] [--origin <name|self>] [--description <string|->]
 tandem-cli ticket set --id <id> [--title <string>] [--status <value>]
                       [--assignee <name|self>] [--description <string|->]
+                      [--append-description <string|->]
 tandem-cli ticket move --id <id> [--lane <name>] [--index <number>]
 tandem-cli ticket block --id <id> --on <id>
 tandem-cli ticket unblock --id <id> [--on <id>]
@@ -153,9 +162,17 @@ tandem-cli ticket comment add --id <id> [--author <name>] --body <string|->
 tandem-cli ticket comment list --id <id>
 
 tandem-cli lane list
-tandem-cli lane add --name <name> [--abbr <key>]
-tandem-cli lane rename --from <name> --to <name> [--abbr <key>]
+tandem-cli lane add --name <name> [--abbr <key>] [--project <name>]
+tandem-cli lane rename --from <name> --to <name> [--abbr <key>] [--project <name>]
 tandem-cli lane delete --name <name>
+tandem-cli project list
+tandem-cli project add --name <name>
+tandem-cli project rename --from <name> --to <name>
+tandem-cli project delete --name <name>
+
+tandem-cli settings get
+tandem-cli settings set [--project <name>]
+
 tandem-cli note rename --from <path> --to <path>
 tandem-cli note capture --kind <decision|gotcha|fact|thread> [--project <name>] [--session <id>]
 tandem-cli note stats [--project <name>]
@@ -168,7 +185,7 @@ tandem-cli session end [--session <id>] [--outcome <value>] [--summary <string|-
                        [--tokens-reasoning <n>] [--tokens-cache-read <n>]
                        [--tokens-cache-write <n>] [--cost <dollars>] [--model <name>]
                        [--skills <name=count[,name=count]>]
-                       [--usage-from-harness] [--harness-events <path>]
+                       [--usage-from-harness] [--harness-url <url>]
 tandem-cli session link --ticket <id> [--session <id>]
 tandem-cli session list [--project <name>] [--status <value>]
 tandem-cli session show [--session <id>]
@@ -181,6 +198,7 @@ tandem-cli sprint show --lane <name> --number <n>
 tandem-cli setup install [--host <opencode|claude|agents>] [--force]
 tandem-cli setup uninstall [--host <opencode|claude|agents>]
 tandem-cli setup status
+tandem-cli settings set [--roster <name>]...
 tandem-cli doctor
 ```
 
@@ -254,7 +272,7 @@ Tandem's store was `tickets.json` until v0.27.0, with the comments, sessions, sp
 
 - **Not a service yet.** There is no account to create and nothing syncs; the state is one SQLite database and a folder of notes in your home directory. A hosted core for several humans is a later deployment shape, not a feature you have now.
 - **Not a team tool yet.** One Mac, one store. There is no shared board and no realtime collaboration; the bikeshed is not shareable either.
-- **Not cross-platform.** macOS 27 or later, on Apple silicon.
+- **Not cross-platform as a shipped app.** The release publishes macOS artifacts only: macOS 27 or later, on Apple silicon. Windows and Linux app builds are unshipped and unsupported.
 - **Not a tracker with edges.** The board has no labels, no blocking edges and no child tickets — see [ADR 0026](docs/adr/0026-agent-prompts-and-portable-setup.md).
 - **Not a text file.** The store is a database the app and the CLI own; the bikeshed is where prose, and hand edits, belong. A JSON store from an older build is read once and then ignored.
 

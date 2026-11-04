@@ -38,7 +38,9 @@ pub mod layout;
 pub mod markdown;
 pub mod operation;
 pub mod ordering;
+pub mod preflight;
 pub mod query;
+pub mod runner;
 pub mod session;
 pub mod settings;
 pub mod sprint;
@@ -55,7 +57,9 @@ pub use description::DescriptionBody;
 pub use edit::Edit;
 pub use error::DomainError;
 pub use label::AssigneeLabel;
-pub use lane::{Lane, LaneDeletion, LaneKey, TicketRef};
+pub use lane::{
+    Lane, LaneDeletion, LaneKey, Project, ProjectDeletion, ProjectWithLanes, TicketRef,
+};
 pub use layout::{BoardLane, TicketBoard};
 pub use markdown::{InlineStyle, MarkdownBlock, MarkdownInline, TicketMarkdown};
 pub use ordering::TicketOrdering;

@@ -105,10 +105,24 @@ export function healthSummary(health: BikeshedHealth): string {
   return parts.length === 0 ? 'No broken links, no orphan notes.' : parts.join(', ')
 }
 
-/** A recovery named as what it is: a draft from an interrupted save. */
+/** The folder a recovery's temp was kept in, or null at the vault root. */
+export function recoveryLocation(recovery: RecoveryView): string | null {
+  const slash = recovery.file.lastIndexOf('/')
+  if (slash < 0) return null
+  const folder = recovery.file.slice(0, slash)
+  return folder === '' ? null : folder
+}
+
+/**
+ * A recovery named as what it is, a draft kept from an interrupted save. The
+ * temp's own name (`.note-*.tmp`) and its byte count stay internal: the row
+ * names where the draft was kept, never the tmp path, and never as an error.
+ */
 export function recoverableLabel(recovery: RecoveryView): string {
-  const bytes = `${recovery.bytes} bytes`
-  return `A draft from an interrupted save: ${recovery.file} (${bytes})`
+  const folder = recoveryLocation(recovery)
+  return folder === null
+    ? 'Unsaved draft kept from an interrupted save'
+    : `Unsaved draft kept from an interrupted save in ${folder}`
 }
 
 /** The Tickets face at the sheet a note links to (PRT-17 reads the query). */
@@ -121,4 +135,30 @@ export function notePaths(nodes: NoteNodeView[]): string[] {
   return nodes.flatMap((node) =>
     node.kind === 'note' ? [node.path] : notePaths(node.children),
   )
+}
+
+/**
+ * The tree the Notes face draws under a project focus: the `projects` folder
+ * holding only the focused project's folder, matched case-insensitively
+ * (a lane is `Tandem`, its folder `tandem`).
+ *
+ * No focus (the show-all escape) draws the whole vault, and so does a focus
+ * no project folder answers: an ambiguous, renamed or missing folder never
+ * hides notes. The returned nodes keep their full paths, so the wikilink
+ * index and the open note keep working.
+ */
+export function focusNodes(nodes: NoteNodeView[], active: string | null): NoteNodeView[] {
+  if (active === null || active.trim() === '') return nodes
+  const wanted = active.trim().toLowerCase()
+  const matches = (node: NoteNodeView): boolean =>
+    node.kind === 'folder' && node.name.toLowerCase() === wanted
+  let narrowed = false
+  const scoped = nodes.map((node) => {
+    if (node.kind !== 'folder' || node.path !== 'projects') return node
+    const children = node.children.filter(matches)
+    if (children.length !== 1) return node
+    narrowed = true
+    return { ...node, children }
+  })
+  return narrowed ? scoped : nodes
 }
